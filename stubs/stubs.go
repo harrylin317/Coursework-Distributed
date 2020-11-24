@@ -4,11 +4,13 @@ import (
 	"uk.ac.bris.cs/gameoflife/util"
 )
 
-var Calculate = "DistributorOperation.Calculate"
-var GetValues = "DistributorOperation.getValues"
+var ExecuteAllTurns = "DistributorOperation.ExecuteAllTurns"
 var KeyPressed = "DistributorOperation.KeyPressed"
-var SendValues = "DistributorOperation.SendValues"
+var InitializeValues = "DistributorOperation.InitializeValues"
 var GetAliveCells = "DistributorOperation.GetAliveCells"
+var GetWorld = "DistributorOperation.GetWorld"
+var GetCurrentTurn = "DistributorOperation.GetCurrentTurn"
+
 var Test = "DistributorOperation.Test"
 
 type World struct {
@@ -18,10 +20,6 @@ type World struct {
 type RequiredValue struct {
 	ImageHeight, ImageWidth, Turns int
 	World                          [][]byte
-}
-
-type RequestValue struct {
-	Message string
 }
 
 type Command struct {
@@ -37,4 +35,10 @@ type AliveCells struct {
 }
 type Response struct {
 	Message string
+}
+type Request struct {
+	Message string
+}
+type Key struct {
+	Key rune
 }

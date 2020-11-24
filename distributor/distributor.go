@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"net/rpc"
+	"time"
 
 	"uk.ac.bris.cs/gameoflife/stubs"
 	"uk.ac.bris.cs/gameoflife/util"
@@ -15,10 +16,13 @@ const dead = 0
 
 var (
 	world       [][]byte
-	aliveCells  []util.Cell
-	turns       int
+	turn        int
 	imageHeight int
 	imageWidth  int
+	totalTurns  int
+	pauseChan   = make(chan bool)
+	exitChan    = make(chan bool)
+	pause       = false
 )
 
 // distributor divides the work between workers and interacts with other goroutines.
@@ -34,32 +38,104 @@ func main() {
 
 type DistributorOperation struct{}
 
-func (d *DistributorOperation) Calculate(req stubs.RequiredValue, res *stubs.Response) (err error) {
-	world = calculateNextState(req.ImageHeight, req.ImageWidth, world)
+func (d *DistributorOperation) Test(req stubs.Request, res *stubs.Turn) (err error) {
+	i := 0
+	for {
+		i++
+		res.Turn = i
+		fmt.Println("finished one turn")
+		if i == 10 {
+			break
+		}
+		time.Sleep(1 * time.Second)
+	}
+	return
+}
+
+func (d *DistributorOperation) ExecuteAllTurns(req stubs.Request, res *stubs.Turn) (err error) {
+	// exit := false
+
+	for turn = 0; turn < totalTurns; turn++ {
+		// select {
+
+		// case <-pauseChan:
+		// 	select {
+		// 	case <-pauseChan:
+		// 		break
+		// 	case exit = <-exitChan:
+		// 		break
+		// 	}
+		// case exit = <-exitChan:
+		// default:
+		world = calculateNextState(imageHeight, imageWidth, world)
+
+		//res.Turn = turn
+		//fmt.Println(res.Turn)
+
+		// }
+		// if exit {
+		// 	break
+		// }
+
+	}
+	res.Turn = turn
 
 	return
 }
 
-func (d *DistributorOperation) KeyPressed(req stubs.RequiredValue, res *stubs.World) (err error) {
+func (d *DistributorOperation) GetWorld(req stubs.Request, res *stubs.World) (err error) {
+	for y := 0; y < imageHeight; y++ {
+		fmt.Println(world[y])
+
+	}
+	// alive := calculateAliveCells(imageHeight, imageWidth, world)
+	// fmt.Println("CELLALIVE", alive)
+
+	res.World = world
 	return
 }
-func (d *DistributorOperation) SendValues(req stubs.RequiredValue, res *stubs.Response) (err error) {
+func (d *DistributorOperation) GetCurrentTurn(req stubs.Request, res *stubs.Turn) (err error) {
+	res.Turn = turn
+	return
+}
+
+// func (d *DistributorOperation) KeyPressed(req stubs.Key, res *stubs.Response) (err error) {
+// 	key := req.Key
+// 	switch key {
+// 	case 'q':
+// 		exitChan <- true
+// 	case 'p':
+// 		if pause {
+// 			pause = false
+// 			fmt.Println("Continuing")
+// 			pauseChan <- pause
+// 		} else {
+// 			pause = true
+// 			pauseChan <- pause
+// 		}
+
+// 	}
+// 	return
+// }
+func (d *DistributorOperation) InitializeValues(req stubs.RequiredValue, res *stubs.Response) (err error) {
 	world = req.World
 	imageHeight = req.ImageHeight
 	imageWidth = req.ImageWidth
-	turns = req.Turns
-	fmt.Println(world, imageHeight, imageWidth, turns)
+	totalTurns = req.Turns
+	fmt.Println(imageHeight, imageWidth, totalTurns)
 
 	return
 }
-func (d *DistributorOperation) GetAliveCells(req stubs.RequiredValue, res *stubs.AliveCells) (err error) {
-	res.AliveCells = calculateAliveCells(req.ImageHeight, req.ImageWidth, req.World)
+func (d *DistributorOperation) GetAliveCells(req stubs.Request, res *stubs.AliveCells) (err error) {
+	// if pause {
+	// 	return
+	// }
+	res.AliveCells = calculateAliveCells(imageHeight, imageWidth, world)
+	fmt.Println(res.AliveCells)
+
 	return
 }
 func (d *DistributorOperation) GenerateOutput(req stubs.RequiredValue, res *stubs.AliveCells) (err error) {
-	return
-}
-func (d *DistributorOperation) Test(req stubs.Command, res *stubs.Response) (err error) {
 	return
 }
 

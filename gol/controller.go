@@ -24,6 +24,7 @@ const alive = 255
 const dead = 0
 
 func controller(p Params, keyPresses <-chan rune, c controllerChannels) {
+
 	client, err := rpc.Dial("tcp", "192.168.148.174:8050")
 	if err != nil {
 		fmt.Println("Error connecting")
@@ -31,14 +32,24 @@ func controller(p Params, keyPresses <-chan rune, c controllerChannels) {
 	defer client.Close()
 	ticker := time.NewTicker(2 * time.Second)
 	done := make(chan bool)
-	turns := 0
 	world := makeWorld(p.ImageHeight, p.ImageWidth)
-	pauseChan := make(chan bool)
-	exitChan := make(chan bool)
-	//pause := false
+	Response := new(stubs.Response)
+	Request := new(stubs.Request)
+	CurrentTurn := new(stubs.Turn)
+	//turn := 0
+	AliveCells := new(stubs.AliveCells)
+	//Test := new(stubs.Turn)
 
-	//aliveCellsCount := 0
-	var aliveCellsSlice []util.Cell
+	// func() {
+	// 	wait := client.Go(stubs.Test, Request, Test, nil)
+	// 	fmt.Println(Test.Turn)
+	// 	time.Sleep(2 * time.Second)
+	// 	fmt.Println(Test.Turn)
+
+	// 	<-wait.Done
+	// 	fmt.Println(Test.Turn)
+
+	// }()
 
 	c.ioCommand <- ioInput
 	filename := strconv.Itoa(p.ImageWidth) + "x" + strconv.Itoa(p.ImageHeight)
@@ -53,87 +64,79 @@ func controller(p Params, keyPresses <-chan rune, c controllerChannels) {
 		}
 	}
 
-	// go func() {
-	// 	for {
-	// 		select {
-	// 		case <-done:
-	// 			return
-	// 		case <-ticker.C:
-	// 			if turns == 0 || pause {
-	// 				break
-	// 			}
-	// 			aliveCellsRequiredValue := stubs.RequiredValue{ImageHeight: p.ImageHeight, ImageWidth: p.ImageWidth, World: world}
-	// 				ImageHeight: p.ImageHeight, ImageWidth: p.ImageWidth, World: world}
-	// 			client.Call(stubs.GetAliveCells, aliveCellsRequiredValue, aliveCellsSlice)
-	// 			aliveCellsCount = len(aliveCellsSlice)
-	// 			eventAliveCellsCount := AliveCellsCount{CompletedTurns: turns, CellsCount: aliveCellsCount}
-	// 			c.events <- eventAliveCellsCount
-	// 		}
-	// 	}
-	// }()
-	// go func() {
-	// 	for {
-	// 		select {
-	// 		case key := <-keyPresses:
-	// 			switch key {
-	// 			case 's':
-	// 				generateOutputFile(c, filename, turns, p, world)
-	// 			case 'q':
-	// 				exitChan <- true
-	// 			case 'p':
-	// 				if pause {
-	// 					pause = false
-	// 					fmt.Println("Continuing")
-	// 					pauseChan <- pause
-	// 				} else {
-	// 					pause = true
-	// 					c.events <- StateChange{turns, Executing}
-	// 					pauseChan <- pause
-	// 					c.events <- StateChange{turns, Paused}
-	// 				}
-	// 			}
-	// 		}
-	// 	}
-	// }()
-
-	newWorld := stubs.World{World: world}
-	Response := new(stubs.Response)
-	client.Call(stubs.SendValues, newWorld, Response)
-
-	exit := false
-	for turns = 0; turns < p.Turns; turns++ {
-		select {
-		case <-pauseChan:
+	go func() {
+		for {
 			select {
-			case <-pauseChan:
-				break
-			case exit = <-exitChan:
-				break
-			}
-		case exit = <-exitChan:
-		default:
-			RequiredValue := stubs.RequiredValue{ImageHeight: p.ImageHeight, ImageWidth: p.ImageWidth, Turns: p.Turns, World: world}
-			err := client.Call(stubs.Calculate, RequiredValue, Response)
-			if err != nil {
-				fmt.Println("RPC client returned error:")
-				fmt.Println(err)
+			case <-done:
 				return
+			case <-ticker.C:
+				client.Call(stubs.GetCurrentTurn, Request, CurrentTurn)
+				if CurrentTurn.Turn == 0 {
+					break
+				} else {
+					client.Call(stubs.GetAliveCells, Request, AliveCells)
+					aliveCellsCount := len(AliveCells.AliveCells)
+					eventAliveCellsCount := AliveCellsCount{CompletedTurns: CurrentTurn.Turn, CellsCount: aliveCellsCount}
+					c.events <- eventAliveCellsCount
+				}
+
 			}
-			// callCellFlippedEvent(updatedWorld.World, world, p.ImageHeight, p.ImageWidth, turns, c)
-			// world = updatedWorld.World
-			eventTurnComplete := TurnComplete{CompletedTurns: turns}
-			c.events <- eventTurnComplete
 		}
-		if exit {
+	}()
+
+	// go func() {
+	// 	for {
+	// 		key := <-keyPresses
+	// 		if key == 's' {
+	// 			generateOutputFile(c, filename, CurrentTurn, p, client)
+	// 		} else {
+	// 			keyPressed := stubs.Key{Key: key}
+	// 			client.Call(stubs.KeyPressed, keyPressed, Response)
+	// 			c.events <- StateChange{turn, Paused}
+	// 		}
+
+	// 	}
+
+	// }()
+
+	SendValue := stubs.RequiredValue{ImageHeight: p.ImageHeight, ImageWidth: p.ImageWidth, Turns: p.Turns, World: world}
+	client.Call(stubs.InitializeValues, SendValue, Response)
+	finishCall := client.Go(stubs.ExecuteAllTurns, Request, CurrentTurn, nil)
+
+	// for turn = 0; turn < p.Turns; turn++ {
+	// 	client.Call(stubs.ExecuteTurn, Request, Response)
+	// 	client.Call(stubs.GetAliveCells, Request, AliveCells)
+	// 	eventTurnComplete := TurnComplete{CompletedTurns: turn}
+	// 	c.events <- eventTurnComplete
+	// }
+
+	tmp := 0
+	finishedExecution := false
+	for {
+		select {
+		case <-finishCall.Done:
+			finishedExecution = true
+			break
+		default:
+			client.Call(stubs.GetCurrentTurn, Request, CurrentTurn)
+			if tmp != CurrentTurn.Turn {
+				//client.Call(stubs.GetAliveCells, Request, AliveCells)
+				eventTurnComplete := TurnComplete{CompletedTurns: CurrentTurn.Turn}
+				c.events <- eventTurnComplete
+				tmp = CurrentTurn.Turn
+			}
+
+		}
+		if finishedExecution {
 			break
 		}
-
 	}
-
-	eventFinalTurnComplete := FinalTurnComplete{CompletedTurns: turns, Alive: aliveCellsSlice}
+	client.Call(stubs.GetCurrentTurn, Request, CurrentTurn)
+	client.Call(stubs.GetAliveCells, Request, AliveCells)
+	fmt.Println("CELLALIVE", p.ImageHeight, p.ImageWidth, p.Turns, AliveCells.AliveCells)
+	eventFinalTurnComplete := FinalTurnComplete{CompletedTurns: CurrentTurn.Turn, Alive: AliveCells.AliveCells}
 	c.events <- eventFinalTurnComplete
-
-	generateOutputFile(c, filename, turns, p, world)
+	generateOutputFile(c, filename, CurrentTurn, p, client)
 
 	ticker.Stop()
 	done <- true
@@ -141,7 +144,7 @@ func controller(p Params, keyPresses <-chan rune, c controllerChannels) {
 	c.ioCommand <- ioCheckIdle
 	<-c.ioIdle
 
-	c.events <- StateChange{turns, Quitting}
+	c.events <- StateChange{CurrentTurn.Turn, Quitting}
 	close(c.events)
 
 }
@@ -157,16 +160,20 @@ func callCellFlippedEvent(updatedWorld [][]byte, oldWorld [][]byte, height, widt
 	}
 }
 
-func generateOutputFile(c controllerChannels, filename string, turns int, p Params, world [][]byte) {
+func generateOutputFile(c controllerChannels, filename string, CurrentTurn *stubs.Turn, p Params, client *rpc.Client) {
 	c.ioCommand <- ioOutput
-	filename = filename + "x" + strconv.Itoa(turns)
+	filename = filename + "x" + strconv.Itoa(CurrentTurn.Turn)
 	c.ioFilename <- filename
+	Request := new(stubs.Request)
+	GetWorld := new(stubs.World)
+	client.Call(stubs.GetWorld, Request, GetWorld)
+
 	for y := 0; y < p.ImageHeight; y++ {
 		for x := 0; x < p.ImageWidth; x++ {
-			c.Output <- world[y][x]
+			c.Output <- GetWorld.World[y][x]
 		}
 	}
-	eventImageOutputComplete := ImageOutputComplete{CompletedTurns: turns, Filename: filename}
+	eventImageOutputComplete := ImageOutputComplete{CompletedTurns: CurrentTurn.Turn, Filename: filename}
 	c.events <- eventImageOutputComplete
 }
 
