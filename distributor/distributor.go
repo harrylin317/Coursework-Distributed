@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"net"
 	"net/rpc"
-	"time"
 
 	"uk.ac.bris.cs/gameoflife/stubs"
 	"uk.ac.bris.cs/gameoflife/util"
@@ -15,14 +14,16 @@ const alive = 255
 const dead = 0
 
 var (
-	world       [][]byte
-	turn        int
-	imageHeight int
-	imageWidth  int
-	totalTurns  int
-	pauseChan   = make(chan bool)
-	exitChan    = make(chan bool)
-	pause       = false
+	world                                     [][]byte
+	turn, imageHeight, imageWidth, totalTurns int
+	unblock                                   = make(chan bool)
+	start                                     = make(chan bool)
+	getTurnSignal                             = make(chan bool)
+	getAliveCellsSignal                       = make(chan bool)
+	turnChan                                  = make(chan int)
+	aliveCellsChan                            = make(chan []util.Cell)
+	turnCompleted                             = false
+	aliveCells                                []util.Cell
 )
 
 // distributor divides the work between workers and interacts with other goroutines.
@@ -31,6 +32,7 @@ func main() {
 	flag.Parse()
 	listener, _ := net.Listen("tcp", *pAddr)
 	defer listener.Close()
+
 	rpc.Register(&DistributorOperation{})
 	rpc.Accept(listener)
 
@@ -40,62 +42,48 @@ type DistributorOperation struct{}
 
 func (d *DistributorOperation) Test(req stubs.Request, res *stubs.Turn) (err error) {
 	i := 0
-	for {
-		i++
+	for i = 0; i < 10; i++ {
+
 		res.Turn = i
-		fmt.Println("finished one turn")
-		if i == 10 {
-			break
-		}
-		time.Sleep(1 * time.Second)
+		fmt.Println("finished turn", i)
+
 	}
+	res.Turn = i
 	return
 }
+func (d *DistributorOperation) StartTicker(req stubs.Request, res *stubs.Response) (err error) {
 
-func (d *DistributorOperation) ExecuteAllTurns(req stubs.Request, res *stubs.Turn) (err error) {
-	// exit := false
+}
+
+func (d *DistributorOperation) ExecuteAllTurns(req stubs.Request, res *stubs.Response) (err error) {
+	fmt.Println("Start execution ", turn)
+	fmt.Println("Total turn ", totalTurns)
 
 	for turn = 0; turn < totalTurns; turn++ {
-		// select {
-
-		// case <-pauseChan:
-		// 	select {
-		// 	case <-pauseChan:
-		// 		break
-		// 	case exit = <-exitChan:
-		// 		break
-		// 	}
-		// case exit = <-exitChan:
-		// default:
+		fmt.Println("execurting turn ", turn)
 		world = calculateNextState(imageHeight, imageWidth, world)
-
-		//res.Turn = turn
-		//fmt.Println(res.Turn)
-
-		// }
-		// if exit {
-		// 	break
-		// }
+		aliveCells = calculateAliveCells(imageHeight, imageWidth, world)
+		turnCompleted = true
+		<-unblock
+		turnChan <- turn + 1
 
 	}
-	res.Turn = turn
 
 	return
 }
 
 func (d *DistributorOperation) GetWorld(req stubs.Request, res *stubs.World) (err error) {
-	for y := 0; y < imageHeight; y++ {
-		fmt.Println(world[y])
-
-	}
-	// alive := calculateAliveCells(imageHeight, imageWidth, world)
-	// fmt.Println("CELLALIVE", alive)
-
+	// for y := 0; y < imageHeight; y++ {
+	// 	fmt.Println(world[y])
+	// }
 	res.World = world
 	return
 }
 func (d *DistributorOperation) GetCurrentTurn(req stubs.Request, res *stubs.Turn) (err error) {
-	res.Turn = turn
+	unblock <- true
+	getTurn := <-turnChan
+	res.Turn = getTurn
+
 	return
 }
 
@@ -123,16 +111,12 @@ func (d *DistributorOperation) InitializeValues(req stubs.RequiredValue, res *st
 	imageWidth = req.ImageWidth
 	totalTurns = req.Turns
 	fmt.Println(imageHeight, imageWidth, totalTurns)
+	aliveCells = calculateAliveCells(imageHeight, imageWidth, world)
 
 	return
 }
 func (d *DistributorOperation) GetAliveCells(req stubs.Request, res *stubs.AliveCells) (err error) {
-	// if pause {
-	// 	return
-	// }
-	res.AliveCells = calculateAliveCells(imageHeight, imageWidth, world)
-	fmt.Println(res.AliveCells)
-
+	res.AliveCells = aliveCells
 	return
 }
 func (d *DistributorOperation) GenerateOutput(req stubs.RequiredValue, res *stubs.AliveCells) (err error) {
@@ -176,7 +160,6 @@ func calculateNextState(imageHeight, imageWidth int, world [][]byte) [][]byte {
 	for y := 0; y < imageHeight; y++ {
 		for x := 0; x < imageWidth; x++ {
 			neighbours := calculateNeighbours(x, y, imageHeight, imageWidth, world)
-			//call CellFlipped event when a cell state is changed
 			if world[y][x] == alive {
 				if neighbours == 2 || neighbours == 3 {
 					newWorld[y][x] = alive
