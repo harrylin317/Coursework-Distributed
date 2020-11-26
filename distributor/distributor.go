@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"net/rpc"
+	"strconv"
 
 	"uk.ac.bris.cs/gameoflife/stubs"
 	"uk.ac.bris.cs/gameoflife/util"
@@ -17,13 +18,16 @@ var (
 	world                                     [][]byte
 	turn, imageHeight, imageWidth, totalTurns int
 	unblock                                   = make(chan bool)
-	start                                     = make(chan bool)
-	getTurnSignal                             = make(chan bool)
-	getAliveCellsSignal                       = make(chan bool)
 	turnChan                                  = make(chan int)
 	aliveCellsChan                            = make(chan []util.Cell)
-	turnCompleted                             = false
-	aliveCells                                []util.Cell
+	cellFlippedChan                           = make(chan []util.Cell)
+	pauseChan                                 = make(chan bool)
+	haltChan                                  = make(chan bool)
+	aliveCells, cellFlipped                   []util.Cell
+	filename                                  string
+	connectedToController                     = false
+	connectionChan                            = make(chan bool)
+	initialized                               = false
 )
 
 // distributor divides the work between workers and interacts with other goroutines.
@@ -32,7 +36,6 @@ func main() {
 	flag.Parse()
 	listener, _ := net.Listen("tcp", *pAddr)
 	defer listener.Close()
-
 	rpc.Register(&DistributorOperation{})
 	rpc.Accept(listener)
 
@@ -40,86 +43,89 @@ func main() {
 
 type DistributorOperation struct{}
 
-func (d *DistributorOperation) Test(req stubs.Request, res *stubs.Turn) (err error) {
-	i := 0
-	for i = 0; i < 10; i++ {
-
-		res.Turn = i
-		fmt.Println("finished turn", i)
-
-	}
-	res.Turn = i
-	return
-}
-func (d *DistributorOperation) StartTicker(req stubs.Request, res *stubs.Response) (err error) {
-
-}
-
 func (d *DistributorOperation) ExecuteAllTurns(req stubs.Request, res *stubs.Response) (err error) {
-	fmt.Println("Start execution ", turn)
-	fmt.Println("Total turn ", totalTurns)
-
 	for turn = 0; turn < totalTurns; turn++ {
-		fmt.Println("execurting turn ", turn)
-		world = calculateNextState(imageHeight, imageWidth, world)
-		aliveCells = calculateAliveCells(imageHeight, imageWidth, world)
-		turnCompleted = true
-		<-unblock
-		turnChan <- turn + 1
-
+		select {
+		case <-pauseChan:
+			fmt.Println("paused", turn)
+			select {
+			case <-pauseChan:
+				fmt.Println("unpaused", turn)
+				turn--
+				break
+			case connectedToController = <-connectionChan:
+				turn--
+				break
+			}
+		case connectedToController = <-connectionChan:
+			turn--
+			break
+		default:
+			cellFlipped = []util.Cell{}
+			world = calculateNextState(imageHeight, imageWidth, world)
+			aliveCells = calculateAliveCells(imageHeight, imageWidth, world)
+			if connectedToController {
+				<-unblock
+				turnChan <- turn + 1
+				aliveCellsChan <- aliveCells
+				cellFlippedChan <- cellFlipped
+			}
+		}
 	}
-
+	initialized = false
 	return
 }
 
 func (d *DistributorOperation) GetWorld(req stubs.Request, res *stubs.World) (err error) {
-	// for y := 0; y < imageHeight; y++ {
-	// 	fmt.Println(world[y])
-	// }
 	res.World = world
 	return
 }
-func (d *DistributorOperation) GetCurrentTurn(req stubs.Request, res *stubs.Turn) (err error) {
-	unblock <- true
-	getTurn := <-turnChan
-	res.Turn = getTurn
-
+func (d *DistributorOperation) GetFilename(req stubs.Request, res *stubs.Filename) (err error) {
+	res.Filename = filename
 	return
 }
 
-// func (d *DistributorOperation) KeyPressed(req stubs.Key, res *stubs.Response) (err error) {
-// 	key := req.Key
-// 	switch key {
-// 	case 'q':
-// 		exitChan <- true
-// 	case 'p':
-// 		if pause {
-// 			pause = false
-// 			fmt.Println("Continuing")
-// 			pauseChan <- pause
-// 		} else {
-// 			pause = true
-// 			pauseChan <- pause
-// 		}
-
-// 	}
-// 	return
-// }
-func (d *DistributorOperation) InitializeValues(req stubs.RequiredValue, res *stubs.Response) (err error) {
+func (d *DistributorOperation) GetCurrentState(req stubs.Request, res *stubs.State) (err error) {
+	unblock <- true
+	getTurn := <-turnChan
+	getAliveCells := <-aliveCellsChan
+	getCellFlipped := <-cellFlippedChan
+	res.Turn = getTurn
+	res.AliveCells = getAliveCells
+	res.CellFlipped = getCellFlipped
+	return
+}
+func (d *DistributorOperation) CheckIfInitialized(req stubs.Request, res *stubs.Initialized) (err error) {
+	res.Initialized = initialized
+	if !connectedToController {
+		connectedToController = true
+	}
+	return
+}
+func (d *DistributorOperation) KeyPressed(req stubs.Key, res *stubs.Response) (err error) {
+	key := req.Key
+	switch key {
+	case 's':
+		res.Message = "Output"
+	case 'q':
+		connectionChan <- false
+		filename = strconv.Itoa(imageWidth) + "x" + strconv.Itoa(imageHeight)
+		res.Message = "Exit"
+	case 'p':
+		pauseChan <- true
+		res.Message = "Pause"
+	}
+	return
+}
+func (d *DistributorOperation) InitializeValues(req stubs.RequiredValue, res *stubs.State) (err error) {
+	initialized = true
 	world = req.World
 	imageHeight = req.ImageHeight
 	imageWidth = req.ImageWidth
 	totalTurns = req.Turns
-	fmt.Println(imageHeight, imageWidth, totalTurns)
 	aliveCells = calculateAliveCells(imageHeight, imageWidth, world)
-
-	return
-}
-func (d *DistributorOperation) GetAliveCells(req stubs.Request, res *stubs.AliveCells) (err error) {
+	res.Turn = turn
 	res.AliveCells = aliveCells
-	return
-}
-func (d *DistributorOperation) GenerateOutput(req stubs.RequiredValue, res *stubs.AliveCells) (err error) {
 	return
 }
 
@@ -156,7 +162,6 @@ func calculateNextState(imageHeight, imageWidth int, world [][]byte) [][]byte {
 	// height := endY - startY
 	// width := endX - startX
 	newWorld := makeWorld(imageHeight, imageWidth)
-
 	for y := 0; y < imageHeight; y++ {
 		for x := 0; x < imageWidth; x++ {
 			neighbours := calculateNeighbours(x, y, imageHeight, imageWidth, world)
@@ -165,12 +170,16 @@ func calculateNextState(imageHeight, imageWidth int, world [][]byte) [][]byte {
 					newWorld[y][x] = alive
 				} else {
 					newWorld[y][x] = dead
+					cellFlipped = append(cellFlipped, util.Cell{X: x, Y: y})
 				}
 			} else {
 				if neighbours == 3 {
 					newWorld[y][x] = alive
+					cellFlipped = append(cellFlipped, util.Cell{X: x, Y: y})
+
 				} else {
 					newWorld[y][x] = dead
+
 				}
 			}
 		}

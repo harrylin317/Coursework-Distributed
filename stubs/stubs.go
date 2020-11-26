@@ -7,9 +7,10 @@ import (
 var ExecuteAllTurns = "DistributorOperation.ExecuteAllTurns"
 var KeyPressed = "DistributorOperation.KeyPressed"
 var InitializeValues = "DistributorOperation.InitializeValues"
-var GetAliveCells = "DistributorOperation.GetAliveCells"
 var GetWorld = "DistributorOperation.GetWorld"
-var GetCurrentTurn = "DistributorOperation.GetCurrentTurn"
+var GetCurrentState = "DistributorOperation.GetCurrentState"
+var CheckIfInitialized = "DistributorOperation.CheckIfInitialized"
+var GetFilename = "DistributorOperation.GetFilename"
 
 var Test = "DistributorOperation.Test"
 
@@ -21,18 +22,20 @@ type RequiredValue struct {
 	ImageHeight, ImageWidth, Turns int
 	World                          [][]byte
 }
-
-type Command struct {
-	Message string
+type Initialized struct {
+	Initialized bool
+}
+type Filename struct {
+	Filename string
 }
 
-type Turn struct {
-	Turn int
-}
+// type Turn struct {
+// 	Turn int
+// }
 
-type AliveCells struct {
-	AliveCells []util.Cell
-}
+// type AliveCells struct {
+// 	AliveCells []util.Cell
+// }
 type Response struct {
 	Message string
 }
@@ -41,4 +44,9 @@ type Request struct {
 }
 type Key struct {
 	Key rune
+}
+type State struct {
+	Turn        int
+	AliveCells  []util.Cell
+	CellFlipped []util.Cell
 }
