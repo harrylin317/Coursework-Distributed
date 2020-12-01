@@ -27,7 +27,8 @@ func controller(p Params, keyPresses <-chan rune, c controllerChannels) {
 
 	client, err := rpc.Dial("tcp", "192.168.148.174:8050")
 	if err != nil {
-		fmt.Println("Error connecting")
+		fmt.Println("Error")
+		fmt.Println(err)
 	}
 	defer client.Close()
 	ticker := time.NewTicker(2 * time.Second)
@@ -136,8 +137,8 @@ func controller(p Params, keyPresses <-chan rune, c controllerChannels) {
 		Response := new(stubs.Response)
 		client.Go(stubs.ExecuteAllTurns, Request, Response, nil)
 	}
-
 	for {
+
 		if turn == p.Turns || exit {
 			break
 		} else if !pause {

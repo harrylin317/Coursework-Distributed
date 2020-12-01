@@ -11,8 +11,12 @@ var GetWorld = "DistributorOperation.GetWorld"
 var GetCurrentState = "DistributorOperation.GetCurrentState"
 var CheckIfInitialized = "DistributorOperation.CheckIfInitialized"
 var GetFilename = "DistributorOperation.GetFilename"
+var ConnectToDistributor = "DistributorOperation.ConnectToDistributor"
 
-var Test = "DistributorOperation.Test"
+var Calculate = "Client.Calculate"
+var Neighbour = "Client.Neighbour"
+var GetClientWorld = "Client.GetClientWorld"
+var GetEdgeValue = "Client.GetEdgeValue"
 
 type World struct {
 	World [][]byte
@@ -29,13 +33,6 @@ type Filename struct {
 	Filename string
 }
 
-// type Turn struct {
-// 	Turn int
-// }
-
-// type AliveCells struct {
-// 	AliveCells []util.Cell
-// }
 type Response struct {
 	Message string
 }
@@ -47,6 +44,29 @@ type Key struct {
 }
 type State struct {
 	Turn        int
+	AliveCells  []util.Cell
+	CellFlipped []util.Cell
+}
+type Client struct {
+	ClientAddr string
+}
+type ClientValues struct {
+	StartY, EndY, StartX, EndX int
+	World                      [][]byte
+}
+type Coordinate struct {
+	X int
+	Y int
+}
+type IsAlive struct {
+	Alive bool
+}
+type NeighbourAddr struct {
+	PreviousAddr string
+	NextAddr     string
+}
+type CalculatedValues struct {
+	World       [][]byte
 	AliveCells  []util.Cell
 	CellFlipped []util.Cell
 }
