@@ -53,7 +53,6 @@ func main() {
 	defer listener.Close()
 	rpc.Register(&DistributorOperation{})
 	rpc.Accept(listener)
-
 }
 func newBuffer(size int) buffer {
 	return buffer{
@@ -73,9 +72,7 @@ type DistributorOperation struct{}
 func (d *DistributorOperation) ExecuteAllTurns(req stubs.Request, res *stubs.Response) (err error) {
 	setClientNeighbours()
 	sendWorldToClients()
-
 	for turn = 0; turn < totalTurns; turn++ {
-
 		select {
 		case <-pauseChan:
 			select {
@@ -90,25 +87,38 @@ func (d *DistributorOperation) ExecuteAllTurns(req stubs.Request, res *stubs.Res
 			turn--
 			break
 		default:
+
 			executing = true
+			fmt.Println("execute = true")
+
 			if connectedToController {
+				fmt.Println("waiting space")
+
 				spaceAvaliable.Wait()
 				mutex.Lock()
-
 			}
-			initializeClientEdge()
+			fmt.Println("finisehd waiting")
 
+			initializeClientEdge()
 			startClientCalculation()
+			fmt.Println("finisehd calculating")
+
 			if connectedToController {
 				newItem := item{turn: turn + 1, aliveCells: aliveCells, cellFlipped: cellFlipped}
 				itemBuffer.put(newItem)
 				mutex.Unlock()
 				workAvaliable.Post()
 			}
+
 			executing = false
+			fmt.Println("executing = false ")
+
 		}
+		//fmt.Println("Calculating")
+
 	}
 	initialized = false
+	fmt.Println("Setting initialized to false")
 	return
 }
 
@@ -125,7 +135,6 @@ func (d *DistributorOperation) ConnectToDistributor(req stubs.Client, res *stubs
 	connectedClients++
 	clientList = append(clientList, req)
 	fmt.Println(clientList)
-
 	return
 }
 
@@ -138,24 +147,25 @@ func (d *DistributorOperation) GetCurrentState(req stubs.Request, res *stubs.Sta
 	res.CellFlipped = getItem.cellFlipped
 	mutex.Unlock()
 	spaceAvaliable.Post()
-
 	return
-
 }
 func (d *DistributorOperation) CheckIfInitialized(req stubs.Request, res *stubs.Initialized) (err error) {
 	fmt.Println("check inintilize")
+	fmt.Println(initialized)
+
 	res.Initialized = initialized
 	//the executing value prevents this function from changing connectedToController while ExecuteAllTurns is calculating,
 	//otherwise, if it changes connectedToController mid turn, mutex gets unlocked when its already unlocked, resulting in error
 	if !connectedToController {
+		fmt.Println("not connected to controller")
 		for {
 			if !executing {
 				connectedToController = true
+				fmt.Println("breaking")
 				break
 			}
 		}
 	}
-
 	return
 }
 func (d *DistributorOperation) KeyPressed(req stubs.Key, res *stubs.Response) (err error) {
@@ -175,6 +185,8 @@ func (d *DistributorOperation) KeyPressed(req stubs.Key, res *stubs.Response) (e
 }
 func (d *DistributorOperation) InitializeValues(req stubs.RequiredValue, res *stubs.State) (err error) {
 	fmt.Println("initialized")
+	fmt.Println("Setting initialized to true")
+
 	initialized = true
 	world = req.World
 	imageHeight = req.ImageHeight
@@ -187,7 +199,6 @@ func (d *DistributorOperation) InitializeValues(req stubs.RequiredValue, res *st
 	workAvaliable = semaphore.Init(1, 0)
 	itemBuffer = newBuffer(1)
 	mutex = &sync.Mutex{}
-
 	return
 }
 
@@ -228,8 +239,8 @@ func setClientNeighbours() {
 		}
 		nextClientAddr := clientList[nextIndex].ClientAddr
 		previousClientAddr := clientList[previousIndex].ClientAddr
-		fmt.Println("Next:", nextClientAddr)
-		fmt.Println("previous:", previousClientAddr)
+		// fmt.Println("Next:", nextClientAddr)
+		// fmt.Println("previous:", previousClientAddr)
 
 		client, err1 := rpc.Dial("tcp", currentClient.ClientAddr)
 		if err1 != nil {
@@ -244,10 +255,8 @@ func setClientNeighbours() {
 			fmt.Println(err2)
 		}
 		client.Close()
-
 	}
 	return
-
 }
 
 func sendWorldToClients() {
@@ -255,36 +264,27 @@ func sendWorldToClients() {
 	checkRemainder := imageHeight % connectedClients
 	clientImageHeight := dividedLength
 	clientImageWidth := imageWidth
+
 	tmp := 0
-	// fmt.Println("First world")
-
-	// for _, x := range world {
-	// 	fmt.Println(x)
-	// }
 	for i, currentClient := range clientList {
-
 		if checkRemainder != 0 && i == connectedClients-1 {
 			fmt.Println("Remainder")
-			clientImageHeight = imageHeight
+			clientImageHeight = imageHeight - (dividedLength * i)
 		}
 		clientWorld := makeWorld(clientImageHeight, clientImageWidth)
-
+		//fmt.Println(clientImageHeight, clientImageWidth)
 		for y := 0; y < clientImageHeight; y++ {
 			for x := 0; x < clientImageWidth; x++ {
 				clientWorld[y][x] = world[y+tmp][x]
 			}
 		}
-		// fmt.Println("clientWorld")
-		// for _, x := range clientWorld {
-		// 	fmt.Println(x)
-		// }
 		clientValues := stubs.ClientValues{ImageHeight: clientImageHeight, ImageWidth: clientImageWidth, World: clientWorld}
 		client, _ := rpc.Dial("tcp", currentClient.ClientAddr)
-
 		response := new(stubs.Response)
 		client.Call(stubs.GetClientWorld, clientValues, response)
 
 		tmp = tmp + dividedLength
+
 		client.Close()
 
 	}
@@ -294,9 +294,7 @@ func workerCalculate(clientAddr string, doneChannel chan stubs.CalculatedValues)
 	clientCalculatedValues := new(stubs.CalculatedValues)
 	request := new(stubs.Request)
 	client, _ := rpc.Dial("tcp", clientAddr)
-
 	client.Call(stubs.Calculate, request, clientCalculatedValues)
-
 	client.Close()
 	doneChannel <- *clientCalculatedValues
 }
@@ -304,7 +302,6 @@ func startClientCalculation() {
 	cellFlipped = []util.Cell{}
 	aliveCells = []util.Cell{}
 	doneChannels := make([]chan stubs.CalculatedValues, connectedClients)
-
 	for i := 0; i < connectedClients; i++ {
 		doneChannels[i] = make(chan stubs.CalculatedValues)
 	}
@@ -312,7 +309,6 @@ func startClientCalculation() {
 	for i := 0; i < connectedClients; i++ {
 		go workerCalculate(clientList[i].ClientAddr, doneChannels[i])
 	}
-
 	newWorld := makeWorld(0, 0)
 	tmp := 0
 	for i := 0; i < connectedClients; i++ {
@@ -325,17 +321,10 @@ func startClientCalculation() {
 		for _, cell := range calculatedValues.CellFlipped {
 			cell = util.Cell{X: cell.X, Y: cell.Y + tmp}
 			cellFlipped = append(cellFlipped, cell)
-
 		}
 		tmp = tmp + len(calculatedValues.World)
-
 	}
 	world = newWorld
-	// fmt.Println("after turn")
-	// for _, x := range world {
-	// 	fmt.Println(x)
-	// }
-	//fmt.Println(aliveCells)
 	return
 }
 func initializeClientEdge() {

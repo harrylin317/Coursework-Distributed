@@ -2,7 +2,6 @@ package main
 
 import (
 	"flag"
-	"fmt"
 	"net"
 	"net/rpc"
 	"sync"
@@ -35,29 +34,20 @@ func makeWorld(height, width int) [][]byte {
 	return world
 }
 func sendEdge() {
-	// fmt.Println("before esnding edge")
-	// for _, x := range world {
-	// 	fmt.Println(x)
-	// }
 	response := new(stubs.Response)
+
 	sendEdgePrevious := new(stubs.Edge)
 	edgePrevious := make([]byte, imageWidth)
-
 	edgePrevious = world[0]
-
 	sendEdgePrevious.Edge = edgePrevious
 	sendEdgePrevious.Type = "Top of Original"
 	clientCall(previousNeighbourAddr, sendEdgePrevious, response)
 
 	sendEdgeNext := new(stubs.Edge)
 	edgeNext := make([]byte, imageWidth)
-
 	edgeNext = world[imageHeight-1]
-
 	sendEdgeNext.Edge = edgeNext
 	sendEdgeNext.Type = "Bottom of Original"
-	// fmt.Println("value of bottom in map", world[imageHeight-1])
-	// fmt.Println("Bottom of original", edgeNext)
 	clientCall(nextNeighbourAddr, sendEdgeNext, response)
 	return
 }
@@ -107,13 +97,11 @@ func calculateNeighbours(x, y, imageHeight, imageWidth int) int {
 	return neighbours
 }
 func calculateNextState() [][]byte {
-
 	cellFlipped = []util.Cell{}
 	newWorld := makeWorld(imageHeight, imageWidth)
 	for y := 0; y < imageHeight; y++ {
 		for x := 0; x < imageWidth; x++ {
 			neighbours := calculateNeighbours(x, y, imageHeight, imageWidth)
-			//call CellFlipped event when a cell state is changed
 			if world[y][x] == alive {
 				if neighbours == 2 || neighbours == 3 {
 					newWorld[y][x] = alive
@@ -133,20 +121,14 @@ func calculateNextState() [][]byte {
 		}
 	}
 	return newWorld
-
 }
 
 type Client struct{}
 
 func (c *Client) Calculate(req stubs.Request, res *stubs.CalculatedValues) (err error) {
-	// fmt.Println("top", topEdge)
-
-	// fmt.Println("bottom", bottomEdge)
-
 	world = calculateNextState()
 	res.World = world
 	res.AliveCells = calculateAliveCells(world)
-	//fmt.Println(res.AliveCells)
 	res.CellFlipped = cellFlipped
 
 	return
@@ -154,8 +136,6 @@ func (c *Client) Calculate(req stubs.Request, res *stubs.CalculatedValues) (err 
 func (c *Client) Neighbour(req stubs.NeighbourAddr, res *stubs.Response) (err error) {
 	nextNeighbourAddr = req.NextAddr
 	previousNeighbourAddr = req.PreviousAddr
-	fmt.Println("Get Neighbours")
-
 	return
 }
 func (c *Client) GetClientWorld(req stubs.ClientValues, res *stubs.Response) (err error) {
@@ -178,11 +158,6 @@ func (c *Client) GetEdgeValue(req stubs.Edge, res *stubs.Response) (err error) {
 	} else if req.Type == "Top of Original" {
 		bottomEdge = req.Edge
 	}
-
-	// fmt.Println("initial")
-	// for _, x := range world {
-	// 	fmt.Println(x)
-	// }
 	return
 }
 func main() {
