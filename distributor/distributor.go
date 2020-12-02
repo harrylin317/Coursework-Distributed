@@ -42,7 +42,6 @@ var (
 	clientList                                []stubs.Client
 )
 
-// distributor divides the work between workers and interacts with other goroutines.
 func main() {
 	pAddr := flag.String("ip", ":8050", "port to listen on")
 	flag.Parse()
@@ -76,6 +75,7 @@ func (d *DistributorOperation) ExecuteAllTurns(req stubs.Request, res *stubs.Res
 	sendWorldToClients()
 
 	for turn = 0; turn < totalTurns; turn++ {
+
 		select {
 		case <-pauseChan:
 			select {
@@ -96,8 +96,9 @@ func (d *DistributorOperation) ExecuteAllTurns(req stubs.Request, res *stubs.Res
 				mutex.Lock()
 
 			}
+			initializeClientEdge()
+
 			startClientCalculation()
-			fmt.Println("Finsihed Calculating")
 			if connectedToController {
 				newItem := item{turn: turn + 1, aliveCells: aliveCells, cellFlipped: cellFlipped}
 				itemBuffer.put(newItem)
@@ -213,6 +214,7 @@ func calculateAliveCells(imageHeight, imageWidth int, world [][]byte) []util.Cel
 }
 
 func setClientNeighbours() {
+	fmt.Println("Connected Client: ", connectedClients)
 	if connectedClients == 1 {
 		return
 	}
@@ -226,6 +228,8 @@ func setClientNeighbours() {
 		}
 		nextClientAddr := clientList[nextIndex].ClientAddr
 		previousClientAddr := clientList[previousIndex].ClientAddr
+		fmt.Println("Next:", nextClientAddr)
+		fmt.Println("previous:", previousClientAddr)
 
 		client, err1 := rpc.Dial("tcp", currentClient.ClientAddr)
 		if err1 != nil {
@@ -239,79 +243,109 @@ func setClientNeighbours() {
 			fmt.Println("Error")
 			fmt.Println(err2)
 		}
+		client.Close()
 
 	}
+	return
 
 }
 
 func sendWorldToClients() {
 	dividedLength := imageHeight / connectedClients
 	checkRemainder := imageHeight % connectedClients
+	clientImageHeight := dividedLength
+	clientImageWidth := imageWidth
+	tmp := 0
+	// fmt.Println("First world")
 
+	// for _, x := range world {
+	// 	fmt.Println(x)
+	// }
 	for i, currentClient := range clientList {
-		startY := i * dividedLength
-		endY := (i + 1) * dividedLength
-		startX := 0
-		endX := imageWidth
-		if checkRemainder != 0 && i == connectedClients-1 {
-			endY = imageHeight
-		}
-		clientWorld := makeWorld(endY, endX)
 
-		for y := startY; y < endY; y++ {
-			for x := startX; x < endX; x++ {
-				clientWorld[y][x] = world[y][x]
+		if checkRemainder != 0 && i == connectedClients-1 {
+			fmt.Println("Remainder")
+			clientImageHeight = imageHeight
+		}
+		clientWorld := makeWorld(clientImageHeight, clientImageWidth)
+
+		for y := 0; y < clientImageHeight; y++ {
+			for x := 0; x < clientImageWidth; x++ {
+				clientWorld[y][x] = world[y+tmp][x]
 			}
 		}
-		clientValues := stubs.ClientValues{StartY: startY, EndY: endY, StartX: startX, EndX: endX, World: clientWorld}
-		client, err1 := rpc.Dial("tcp", currentClient.ClientAddr)
-		if err1 != nil {
-			fmt.Println("Error")
-			fmt.Println(err1)
-		}
+		// fmt.Println("clientWorld")
+		// for _, x := range clientWorld {
+		// 	fmt.Println(x)
+		// }
+		clientValues := stubs.ClientValues{ImageHeight: clientImageHeight, ImageWidth: clientImageWidth, World: clientWorld}
+		client, _ := rpc.Dial("tcp", currentClient.ClientAddr)
+
 		response := new(stubs.Response)
-		err2 := client.Call(stubs.GetClientWorld, clientValues, response)
-		if err2 != nil {
-			fmt.Println("Error")
-			fmt.Println(err2)
-		}
+		client.Call(stubs.GetClientWorld, clientValues, response)
+
+		tmp = tmp + dividedLength
+		client.Close()
 
 	}
 
 }
+func workerCalculate(clientAddr string, doneChannel chan stubs.CalculatedValues) {
+	clientCalculatedValues := new(stubs.CalculatedValues)
+	request := new(stubs.Request)
+	client, _ := rpc.Dial("tcp", clientAddr)
 
+	client.Call(stubs.Calculate, request, clientCalculatedValues)
+
+	client.Close()
+	doneChannel <- *clientCalculatedValues
+}
 func startClientCalculation() {
 	cellFlipped = []util.Cell{}
 	aliveCells = []util.Cell{}
-	doneChannels := make([]chan *rpc.Call, connectedClients)
-	clientCalculatedValues := make([]*stubs.CalculatedValues, connectedClients)
-	for i := 0; i < connectedClients; i++ {
-		doneChannels[i] = make(chan *rpc.Call, 1)
-		calculatedValues := new(stubs.CalculatedValues)
-		clientCalculatedValues[i] = calculatedValues
-	}
-	for i, currentClient := range clientList {
-		request := new(stubs.Request)
-		client, err1 := rpc.Dial("tcp", currentClient.ClientAddr)
-		if err1 != nil {
-			fmt.Println("Error")
-			fmt.Println(err1)
-		}
-		client.Go(stubs.Calculate, request, clientCalculatedValues[i], doneChannels[i])
+	doneChannels := make([]chan stubs.CalculatedValues, connectedClients)
 
+	for i := 0; i < connectedClients; i++ {
+		doneChannels[i] = make(chan stubs.CalculatedValues)
 	}
+
+	for i := 0; i < connectedClients; i++ {
+		go workerCalculate(clientList[i].ClientAddr, doneChannels[i])
+	}
+
 	newWorld := makeWorld(0, 0)
+	tmp := 0
 	for i := 0; i < connectedClients; i++ {
-		fmt.Println("Waiting")
+		calculatedValues := <-doneChannels[i]
+		newWorld = append(newWorld, calculatedValues.World...)
+		for _, cell := range calculatedValues.AliveCells {
+			cell = util.Cell{X: cell.X, Y: cell.Y + tmp}
+			aliveCells = append(aliveCells, cell)
+		}
+		for _, cell := range calculatedValues.CellFlipped {
+			cell = util.Cell{X: cell.X, Y: cell.Y + tmp}
+			cellFlipped = append(cellFlipped, cell)
 
-		<-doneChannels[i]
-		fmt.Println("client finished ")
-
-		newWorld = append(newWorld, clientCalculatedValues[i].World...)
-		aliveCells = append(aliveCells, clientCalculatedValues[i].AliveCells...)
-		cellFlipped = append(aliveCells, clientCalculatedValues[i].CellFlipped...)
+		}
+		tmp = tmp + len(calculatedValues.World)
 
 	}
 	world = newWorld
+	// fmt.Println("after turn")
+	// for _, x := range world {
+	// 	fmt.Println(x)
+	// }
+	//fmt.Println(aliveCells)
+	return
+}
+func initializeClientEdge() {
+	request := new(stubs.Request)
+	response := new(stubs.Response)
+
+	for _, currentClient := range clientList {
+		client, _ := rpc.Dial("tcp", currentClient.ClientAddr)
+		client.Call(stubs.SendEdgeValue, request, response)
+		client.Close()
+	}
 	return
 }

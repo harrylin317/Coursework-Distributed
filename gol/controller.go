@@ -180,9 +180,14 @@ func generateOutputFile(c controllerChannels, filename string, turn int, p Param
 	Request := new(stubs.Request)
 	GetWorld := new(stubs.World)
 	client.Call(stubs.GetWorld, Request, GetWorld)
+	// for _, x := range GetWorld.World {
+	// 	fmt.Println(x)
+	// }
+	//fmt.Println("World", GetWorld.World)
 
 	for y := 0; y < p.ImageHeight; y++ {
 		for x := 0; x < p.ImageWidth; x++ {
+
 			c.Output <- GetWorld.World[y][x]
 		}
 	}

@@ -17,6 +17,7 @@ var Calculate = "Client.Calculate"
 var Neighbour = "Client.Neighbour"
 var GetClientWorld = "Client.GetClientWorld"
 var GetEdgeValue = "Client.GetEdgeValue"
+var SendEdgeValue = "Client.SendEdgeValue"
 
 type World struct {
 	World [][]byte
@@ -51,13 +52,10 @@ type Client struct {
 	ClientAddr string
 }
 type ClientValues struct {
-	StartY, EndY, StartX, EndX int
-	World                      [][]byte
+	ImageHeight, ImageWidth int
+	World                   [][]byte
 }
-type Coordinate struct {
-	X int
-	Y int
-}
+
 type IsAlive struct {
 	Alive bool
 }
@@ -69,4 +67,8 @@ type CalculatedValues struct {
 	World       [][]byte
 	AliveCells  []util.Cell
 	CellFlipped []util.Cell
+}
+type Edge struct {
+	Type string
+	Edge []byte
 }

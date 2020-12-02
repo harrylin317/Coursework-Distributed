@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"net/rpc"
+	"sync"
 
 	"uk.ac.bris.cs/gameoflife/stubs"
 	"uk.ac.bris.cs/gameoflife/util"
@@ -14,11 +15,13 @@ const alive = 255
 const dead = 0
 
 var (
-	nextNeighbourAddr          string
-	previousNeighbourAddr      string
-	world                      [][]byte
-	startY, endY, startX, endX int
-	aliveCells, cellFlipped    []util.Cell
+	nextNeighbourAddr       = ""
+	previousNeighbourAddr   = ""
+	topEdge, bottomEdge     []byte
+	world                   [][]byte
+	imageHeight, imageWidth int
+	aliveCells, cellFlipped []util.Cell
+	mutex                   = &sync.Mutex{}
 )
 
 func mod(x, m int) int {
@@ -31,10 +34,44 @@ func makeWorld(height, width int) [][]byte {
 	}
 	return world
 }
-func calculateAliveCells() []util.Cell {
-	aliveCells := []util.Cell{}
-	for y := 0; y < endY; y++ {
-		for x := 0; x < endX; x++ {
+func sendEdge() {
+	// fmt.Println("before esnding edge")
+	// for _, x := range world {
+	// 	fmt.Println(x)
+	// }
+	response := new(stubs.Response)
+	sendEdgePrevious := new(stubs.Edge)
+	edgePrevious := make([]byte, imageWidth)
+
+	edgePrevious = world[0]
+
+	sendEdgePrevious.Edge = edgePrevious
+	sendEdgePrevious.Type = "Top of Original"
+	clientCall(previousNeighbourAddr, sendEdgePrevious, response)
+
+	sendEdgeNext := new(stubs.Edge)
+	edgeNext := make([]byte, imageWidth)
+
+	edgeNext = world[imageHeight-1]
+
+	sendEdgeNext.Edge = edgeNext
+	sendEdgeNext.Type = "Bottom of Original"
+	// fmt.Println("value of bottom in map", world[imageHeight-1])
+	// fmt.Println("Bottom of original", edgeNext)
+	clientCall(nextNeighbourAddr, sendEdgeNext, response)
+	return
+}
+
+func clientCall(neighbourAddr string, edge *stubs.Edge, response *stubs.Response) {
+	client, _ := rpc.Dial("tcp", neighbourAddr)
+	client.Call(stubs.GetEdgeValue, edge, response)
+	defer client.Close()
+	return
+}
+func calculateAliveCells(word [][]byte) []util.Cell {
+	aliveCells = []util.Cell{}
+	for y := 0; y < imageHeight; y++ {
+		for x := 0; x < imageWidth; x++ {
 			if world[y][x] == alive {
 				aliveCells = append(aliveCells, util.Cell{X: x, Y: y})
 			}
@@ -47,32 +84,21 @@ func calculateNeighbours(x, y, imageHeight, imageWidth int) int {
 	for i := -1; i <= 1; i++ {
 		for j := -1; j <= 1; j++ {
 			if i != 0 || j != 0 {
-				if y+i == imageHeight {
-					sendCoordinate := stubs.Coordinate{Y: y + i, X: x + j}
-					isAlive := new(stubs.IsAlive)
-					client, err := rpc.Dial("tcp", previousNeighbourAddr)
-					if err != nil {
-						fmt.Println("Error")
-						fmt.Println(err)
+				if nextNeighbourAddr == "" || previousNeighbourAddr == "" {
+					if world[mod(y+i, imageHeight)][mod(x+j, imageWidth)] == alive {
+						neighbours++
 					}
-					client.Call(stubs.GetEdgeValue, sendCoordinate, isAlive)
-					if isAlive.Alive {
+				} else if y+i == imageHeight {
+					if bottomEdge[mod(x+j, imageWidth)] == alive {
 						neighbours++
 					}
 				} else if y+i < 0 {
-					sendCoordinate := stubs.Coordinate{Y: y + i, X: x + j}
-					isAlive := new(stubs.IsAlive)
-					client, err := rpc.Dial("tcp", nextNeighbourAddr)
-					if err != nil {
-						fmt.Println("Error")
-						fmt.Println(err)
-					}
-					client.Call(stubs.GetEdgeValue, sendCoordinate, isAlive)
-					if isAlive.Alive {
+
+					if topEdge[mod(x+j, imageWidth)] == alive {
 						neighbours++
 					}
 
-				} else if world[y+i][x+j] == alive {
+				} else if world[y+i][mod(x+j, imageWidth)] == alive {
 					neighbours++
 				}
 			}
@@ -81,12 +107,12 @@ func calculateNeighbours(x, y, imageHeight, imageWidth int) int {
 	return neighbours
 }
 func calculateNextState() [][]byte {
-	height := endY - startY
-	width := endX - startX
-	newWorld := makeWorld(height, width)
-	for y := 0; y < height; y++ {
-		for x := 0; x < width; x++ {
-			neighbours := calculateNeighbours(startX+x, startY+y, height, width)
+
+	cellFlipped = []util.Cell{}
+	newWorld := makeWorld(imageHeight, imageWidth)
+	for y := 0; y < imageHeight; y++ {
+		for x := 0; x < imageWidth; x++ {
+			neighbours := calculateNeighbours(x, y, imageHeight, imageWidth)
 			//call CellFlipped event when a cell state is changed
 			if world[y][x] == alive {
 				if neighbours == 2 || neighbours == 3 {
@@ -94,7 +120,6 @@ func calculateNextState() [][]byte {
 				} else {
 					newWorld[y][x] = dead
 					cellFlipped = append(cellFlipped, util.Cell{X: x, Y: y})
-
 				}
 			} else {
 				if neighbours == 3 {
@@ -114,10 +139,15 @@ func calculateNextState() [][]byte {
 type Client struct{}
 
 func (c *Client) Calculate(req stubs.Request, res *stubs.CalculatedValues) (err error) {
-	res.World = calculateNextState()
-	res.AliveCells = calculateAliveCells()
+	// fmt.Println("top", topEdge)
+
+	// fmt.Println("bottom", bottomEdge)
+
+	world = calculateNextState()
+	res.World = world
+	res.AliveCells = calculateAliveCells(world)
+	//fmt.Println(res.AliveCells)
 	res.CellFlipped = cellFlipped
-	fmt.Println("Calculated")
 
 	return
 }
@@ -130,50 +160,39 @@ func (c *Client) Neighbour(req stubs.NeighbourAddr, res *stubs.Response) (err er
 }
 func (c *Client) GetClientWorld(req stubs.ClientValues, res *stubs.Response) (err error) {
 	world = req.World
-	startY = req.StartX
-	endY = req.EndY
-	startX = req.EndX
-	endX = req.EndX
-	fmt.Println("Get World")
+	imageHeight = req.ImageHeight
+	imageWidth = req.ImageWidth
+
 	return
 }
-func (c *Client) GetEdgeValue(req stubs.Coordinate, res *stubs.IsAlive) (err error) {
-	if req.Y < 0 {
-		if world[endY][req.X] == alive {
-			res.Alive = true
-		} else {
-			res.Alive = false
-
-		}
-	} else if req.Y > 0 {
-		if world[0][req.X] == alive {
-			res.Alive = true
-		} else {
-			res.Alive = false
-		}
+func (c *Client) SendEdgeValue(req stubs.Request, res *stubs.Response) (err error) {
+	if nextNeighbourAddr != "" && previousNeighbourAddr != "" {
+		sendEdge()
 	}
-	fmt.Println("Get edge value")
+	return
+}
 
+func (c *Client) GetEdgeValue(req stubs.Edge, res *stubs.Response) (err error) {
+	if req.Type == "Bottom of Original" {
+		topEdge = req.Edge
+	} else if req.Type == "Top of Original" {
+		bottomEdge = req.Edge
+	}
+
+	// fmt.Println("initial")
+	// for _, x := range world {
+	// 	fmt.Println(x)
+	// }
 	return
 }
 func main() {
 	pAddr := flag.String("ip", "192.168.148.174:8030", "IP and port to listen on")
 	distributorAddr := flag.String("distributor", "192.168.148.174:8050", "Address of distributor instance")
 	flag.Parse()
-	listener, err := net.Listen("tcp", *pAddr)
-	if err != nil {
-		fmt.Println("Error")
-		fmt.Println(err)
-	}
+	listener, _ := net.Listen("tcp", *pAddr)
 	defer listener.Close()
-
-	client, err := rpc.Dial("tcp", *distributorAddr)
-	if err != nil {
-		fmt.Println("Error")
-		fmt.Println(err)
-	}
+	client, _ := rpc.Dial("tcp", *distributorAddr)
 	defer client.Close()
-
 	Connect := stubs.Client{ClientAddr: *pAddr}
 	response := new(stubs.Response)
 	client.Call(stubs.ConnectToDistributor, Connect, response)
