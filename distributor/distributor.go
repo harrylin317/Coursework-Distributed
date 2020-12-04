@@ -5,8 +5,10 @@ import (
 	"fmt"
 	"net"
 	"net/rpc"
+	"os"
 	"strconv"
 	"sync"
+	"time"
 
 	"github.com/ChrisGora/semaphore"
 	"uk.ac.bris.cs/gameoflife/stubs"
@@ -32,21 +34,20 @@ var (
 	world                                     [][]byte
 	turn, imageHeight, imageWidth, totalTurns int
 	pauseChan                                 = make(chan bool)
+	terminateChan                             = make(chan bool)
+	terminate                                 = false
 	aliveCells, cellFlipped                   []util.Cell
 	filename                                  string
 	connectedToController                     = false
 	connectionChan                            = make(chan bool)
 	initialized                               = false
-	spaceAvaliable                            semaphore.Semaphore
-	workAvaliable                             semaphore.Semaphore
+	spaceAvaliable, workAvaliable             semaphore.Semaphore
 	itemBuffer                                buffer
 	mutex                                     *sync.Mutex
-	//neighbourMutex                            = &sync.Mutex{}
-
-	executing        bool
-	connectedClients = 0
-	clientList       []clientPack
-	clientMutex      = &sync.Mutex{}
+	executing                                 bool
+	connectedClients                          = 0
+	clientList                                []clientPack
+	clientMutex                               = &sync.Mutex{}
 )
 
 func main() {
@@ -79,7 +80,6 @@ type DistributorOperation struct{}
 func (d *DistributorOperation) ExecuteAllTurns(req stubs.Request, res *stubs.Response) (err error) {
 	setClientNeighbours()
 	sendWorldToClients()
-
 	for turn = 0; turn < totalTurns; turn++ {
 		select {
 		case <-pauseChan:
@@ -90,14 +90,18 @@ func (d *DistributorOperation) ExecuteAllTurns(req stubs.Request, res *stubs.Res
 			case connectedToController = <-connectionChan:
 				turn--
 				break
+			case terminate = <-terminateChan:
+				turn--
+				break
 			}
 		case connectedToController = <-connectionChan:
 			turn--
 			break
+		case terminate = <-terminateChan:
+			turn--
+			break
 		default:
-			fmt.Println("Executing turn", turn)
 			executing = true
-
 			if connectedToController {
 				spaceAvaliable.Wait()
 				mutex.Lock()
@@ -110,11 +114,13 @@ func (d *DistributorOperation) ExecuteAllTurns(req stubs.Request, res *stubs.Res
 				mutex.Unlock()
 				workAvaliable.Post()
 			}
-
 			executing = false
 
 		}
-		//fmt.Println("Calculating")
+		if terminate {
+			shutDown()
+			break
+		}
 
 	}
 	initialized = false
@@ -124,6 +130,9 @@ func (d *DistributorOperation) ExecuteAllTurns(req stubs.Request, res *stubs.Res
 
 func (d *DistributorOperation) GetWorld(req stubs.Request, res *stubs.World) (err error) {
 	res.World = world
+	if terminate {
+		terminateChan <- true
+	}
 	return
 }
 func (d *DistributorOperation) GetFilename(req stubs.Request, res *stubs.Filename) (err error) {
@@ -135,7 +144,6 @@ func (d *DistributorOperation) ConnectToDistributor(req stubs.Client, res *stubs
 	fmt.Println("Connected")
 	connectedClients++
 	clientDial, _ := rpc.Dial("tcp", req.ClientAddr)
-
 	newClient := clientPack{address: req.ClientAddr, client: clientDial}
 	clientList = append(clientList, newClient)
 	fmt.Println(clientList)
@@ -181,13 +189,15 @@ func (d *DistributorOperation) KeyPressed(req stubs.Key, res *stubs.Response) (e
 	case 's':
 		res.Message = "Output"
 	case 'q':
-		fmt.Println("Exitting")
 		connectionChan <- false
 		filename = strconv.Itoa(imageWidth) + "x" + strconv.Itoa(imageHeight)
 		res.Message = "Exit"
 	case 'p':
 		pauseChan <- true
 		res.Message = "Pause"
+	case 'k':
+		terminateChan <- true
+		res.Message = "Exit"
 	}
 	return
 }
@@ -252,11 +262,8 @@ func setClientNeighbours() {
 		response := new(stubs.Response)
 		err := currentClient.client.Call(stubs.Neighbour, request, response)
 		if err != nil {
-			fmt.Println("Error")
+			fmt.Println("Error in setting neighbour")
 			fmt.Println(err)
-			for {
-
-			}
 		}
 	}
 
@@ -296,11 +303,8 @@ func workerCalculate(client *rpc.Client, doneChannel chan stubs.CalculatedValues
 
 	err := client.Call(stubs.Calculate, request, clientCalculatedValues)
 	if err != nil {
-		fmt.Println("Error")
+		fmt.Println("Error in workercalculate")
 		fmt.Println(err)
-		for {
-
-		}
 	}
 	doneChannel <- *clientCalculatedValues
 
@@ -311,11 +315,11 @@ func startClientCalculation() {
 	doneChannels := make([]chan stubs.CalculatedValues, connectedClients)
 	for i := 0; i < connectedClients; i++ {
 		doneChannels[i] = make(chan stubs.CalculatedValues)
-	}
-
-	for i := 0; i < connectedClients; i++ {
 		go workerCalculate(clientList[i].client, doneChannels[i])
 	}
+	// for i := 0; i < connectedClients; i++ {
+	// 	go workerCalculate(clientList[i].client, doneChannels[i])
+	// }
 	newWorld := makeWorld(0, 0)
 	tmp := 0
 	for i := 0; i < connectedClients; i++ {
@@ -335,18 +339,33 @@ func startClientCalculation() {
 	return
 }
 func initializeClientEdge() {
-
 	for _, currentClient := range clientList {
 		request := new(stubs.Request)
 		response := new(stubs.Response)
 		err := currentClient.client.Call(stubs.SendEdgeValue, request, response)
 		if err != nil {
-			fmt.Println("Error")
+			fmt.Println("Error in initialize edge")
 			fmt.Println(err)
-			for {
-
-			}
 		}
 	}
 	return
+}
+
+func shutDown() {
+	<-terminateChan
+	for _, currentClient := range clientList {
+		request := new(stubs.Request)
+		response := new(stubs.Response)
+		err := currentClient.client.Call(stubs.Shutdown, request, response)
+		if err != nil {
+			fmt.Println("Error in shutting down")
+			fmt.Println(err)
+		}
+
+	}
+	fmt.Println("Shutting Down...")
+	time.Sleep(time.Second * 3)
+
+	os.Exit(0)
+
 }

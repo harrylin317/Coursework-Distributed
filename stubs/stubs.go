@@ -18,6 +18,7 @@ var Neighbour = "Client.Neighbour"
 var GetClientWorld = "Client.GetClientWorld"
 var GetEdgeValue = "Client.GetEdgeValue"
 var SendEdgeValue = "Client.SendEdgeValue"
+var Shutdown = "Client.Shutdown"
 
 type World struct {
 	World [][]byte

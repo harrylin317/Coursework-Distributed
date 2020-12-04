@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"net/rpc"
+	"os"
 
 	"uk.ac.bris.cs/gameoflife/stubs"
 	"uk.ac.bris.cs/gameoflife/util"
@@ -21,6 +22,7 @@ var (
 	world                      [][]byte
 	imageHeight, imageWidth    int
 	aliveCells, cellFlipped    []util.Cell
+	exitChan                   = make(chan bool)
 	//mutex                   *sync.Mutex
 )
 
@@ -194,13 +196,20 @@ func (c *Client) GetEdgeValue(req stubs.Edge, res *stubs.Response) (err error) {
 
 	return
 }
+func (c *Client) Shutdown(req stubs.Request, res *stubs.Response) (err error) {
+	exitChan <- true
+	return
+}
 
 func main() {
 	pAddr := flag.String("ip", "127.0.0.1:8030", "IP and port to listen on")
 	distributorAddr := flag.String("distributor", "127.0.0.1:8050", "Address of distributor instance")
 	flag.Parse()
-	//mutex = &sync.Mutex{}
-
+	go func() {
+		<-exitChan
+		fmt.Println("Shutting Down...")
+		os.Exit(0)
+	}()
 	rpc.Register(&Client{})
 	//port := strings.Split(*pAddr, ":")
 	listener, err := net.Listen("tcp", *pAddr)
