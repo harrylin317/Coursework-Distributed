@@ -23,6 +23,10 @@ type item struct {
 type buffer struct {
 	b []item
 }
+type clientPack struct {
+	address string
+	client  *rpc.Client
+}
 
 var (
 	world                                     [][]byte
@@ -37,9 +41,12 @@ var (
 	workAvaliable                             semaphore.Semaphore
 	itemBuffer                                buffer
 	mutex                                     *sync.Mutex
-	executing                                 bool
-	connectedClients                          = 0
-	clientList                                []stubs.Client
+	//neighbourMutex                            = &sync.Mutex{}
+
+	executing        bool
+	connectedClients = 0
+	clientList       []clientPack
+	clientMutex      = &sync.Mutex{}
 )
 
 func main() {
@@ -72,6 +79,7 @@ type DistributorOperation struct{}
 func (d *DistributorOperation) ExecuteAllTurns(req stubs.Request, res *stubs.Response) (err error) {
 	setClientNeighbours()
 	sendWorldToClients()
+
 	for turn = 0; turn < totalTurns; turn++ {
 		select {
 		case <-pauseChan:
@@ -87,22 +95,15 @@ func (d *DistributorOperation) ExecuteAllTurns(req stubs.Request, res *stubs.Res
 			turn--
 			break
 		default:
-
+			fmt.Println("Executing turn", turn)
 			executing = true
-			fmt.Println("execute = true")
 
 			if connectedToController {
-				fmt.Println("waiting space")
-
 				spaceAvaliable.Wait()
 				mutex.Lock()
 			}
-			fmt.Println("finisehd waiting")
-
 			initializeClientEdge()
 			startClientCalculation()
-			fmt.Println("finisehd calculating")
-
 			if connectedToController {
 				newItem := item{turn: turn + 1, aliveCells: aliveCells, cellFlipped: cellFlipped}
 				itemBuffer.put(newItem)
@@ -111,7 +112,6 @@ func (d *DistributorOperation) ExecuteAllTurns(req stubs.Request, res *stubs.Res
 			}
 
 			executing = false
-			fmt.Println("executing = false ")
 
 		}
 		//fmt.Println("Calculating")
@@ -131,10 +131,16 @@ func (d *DistributorOperation) GetFilename(req stubs.Request, res *stubs.Filenam
 	return
 }
 func (d *DistributorOperation) ConnectToDistributor(req stubs.Client, res *stubs.Response) (err error) {
+	clientMutex.Lock()
 	fmt.Println("Connected")
 	connectedClients++
-	clientList = append(clientList, req)
+	clientDial, _ := rpc.Dial("tcp", req.ClientAddr)
+
+	newClient := clientPack{address: req.ClientAddr, client: clientDial}
+	clientList = append(clientList, newClient)
 	fmt.Println(clientList)
+	clientMutex.Unlock()
+
 	return
 }
 
@@ -159,6 +165,7 @@ func (d *DistributorOperation) CheckIfInitialized(req stubs.Request, res *stubs.
 	if !connectedToController {
 		fmt.Println("not connected to controller")
 		for {
+			fmt.Println("waiting for execution to finish")
 			if !executing {
 				connectedToController = true
 				fmt.Println("breaking")
@@ -174,6 +181,7 @@ func (d *DistributorOperation) KeyPressed(req stubs.Key, res *stubs.Response) (e
 	case 's':
 		res.Message = "Output"
 	case 'q':
+		fmt.Println("Exitting")
 		connectionChan <- false
 		filename = strconv.Itoa(imageWidth) + "x" + strconv.Itoa(imageHeight)
 		res.Message = "Exit"
@@ -199,6 +207,7 @@ func (d *DistributorOperation) InitializeValues(req stubs.RequiredValue, res *st
 	workAvaliable = semaphore.Init(1, 0)
 	itemBuffer = newBuffer(1)
 	mutex = &sync.Mutex{}
+
 	return
 }
 
@@ -237,25 +246,20 @@ func setClientNeighbours() {
 		} else if previousIndex == -1 {
 			previousIndex = connectedClients - 1
 		}
-		nextClientAddr := clientList[nextIndex].ClientAddr
-		previousClientAddr := clientList[previousIndex].ClientAddr
-		// fmt.Println("Next:", nextClientAddr)
-		// fmt.Println("previous:", previousClientAddr)
-
-		client, err1 := rpc.Dial("tcp", currentClient.ClientAddr)
-		if err1 != nil {
-			fmt.Println("Error")
-			fmt.Println(err1)
-		}
+		nextClientAddr := clientList[nextIndex].address
+		previousClientAddr := clientList[previousIndex].address
 		request := stubs.NeighbourAddr{PreviousAddr: previousClientAddr, NextAddr: nextClientAddr}
 		response := new(stubs.Response)
-		err2 := client.Call(stubs.Neighbour, request, response)
-		if err2 != nil {
+		err := currentClient.client.Call(stubs.Neighbour, request, response)
+		if err != nil {
 			fmt.Println("Error")
-			fmt.Println(err2)
+			fmt.Println(err)
+			for {
+
+			}
 		}
-		client.Close()
 	}
+
 	return
 }
 
@@ -272,31 +276,34 @@ func sendWorldToClients() {
 			clientImageHeight = imageHeight - (dividedLength * i)
 		}
 		clientWorld := makeWorld(clientImageHeight, clientImageWidth)
-		//fmt.Println(clientImageHeight, clientImageWidth)
 		for y := 0; y < clientImageHeight; y++ {
 			for x := 0; x < clientImageWidth; x++ {
 				clientWorld[y][x] = world[y+tmp][x]
 			}
 		}
 		clientValues := stubs.ClientValues{ImageHeight: clientImageHeight, ImageWidth: clientImageWidth, World: clientWorld}
-		client, _ := rpc.Dial("tcp", currentClient.ClientAddr)
 		response := new(stubs.Response)
-		client.Call(stubs.GetClientWorld, clientValues, response)
-
+		currentClient.client.Call(stubs.GetClientWorld, clientValues, response)
 		tmp = tmp + dividedLength
 
-		client.Close()
-
 	}
+	return
 
 }
-func workerCalculate(clientAddr string, doneChannel chan stubs.CalculatedValues) {
+func workerCalculate(client *rpc.Client, doneChannel chan stubs.CalculatedValues) {
 	clientCalculatedValues := new(stubs.CalculatedValues)
 	request := new(stubs.Request)
-	client, _ := rpc.Dial("tcp", clientAddr)
-	client.Call(stubs.Calculate, request, clientCalculatedValues)
-	client.Close()
+
+	err := client.Call(stubs.Calculate, request, clientCalculatedValues)
+	if err != nil {
+		fmt.Println("Error")
+		fmt.Println(err)
+		for {
+
+		}
+	}
 	doneChannel <- *clientCalculatedValues
+
 }
 func startClientCalculation() {
 	cellFlipped = []util.Cell{}
@@ -307,7 +314,7 @@ func startClientCalculation() {
 	}
 
 	for i := 0; i < connectedClients; i++ {
-		go workerCalculate(clientList[i].ClientAddr, doneChannels[i])
+		go workerCalculate(clientList[i].client, doneChannels[i])
 	}
 	newWorld := makeWorld(0, 0)
 	tmp := 0
@@ -328,13 +335,18 @@ func startClientCalculation() {
 	return
 }
 func initializeClientEdge() {
-	request := new(stubs.Request)
-	response := new(stubs.Response)
 
 	for _, currentClient := range clientList {
-		client, _ := rpc.Dial("tcp", currentClient.ClientAddr)
-		client.Call(stubs.SendEdgeValue, request, response)
-		client.Close()
+		request := new(stubs.Request)
+		response := new(stubs.Response)
+		err := currentClient.client.Call(stubs.SendEdgeValue, request, response)
+		if err != nil {
+			fmt.Println("Error")
+			fmt.Println(err)
+			for {
+
+			}
+		}
 	}
 	return
 }

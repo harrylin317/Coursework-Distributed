@@ -2,9 +2,9 @@ package main
 
 import (
 	"flag"
+	"fmt"
 	"net"
 	"net/rpc"
-	"sync"
 
 	"uk.ac.bris.cs/gameoflife/stubs"
 	"uk.ac.bris.cs/gameoflife/util"
@@ -14,13 +14,14 @@ const alive = 255
 const dead = 0
 
 var (
-	nextNeighbourAddr       = ""
-	previousNeighbourAddr   = ""
-	topEdge, bottomEdge     []byte
-	world                   [][]byte
-	imageHeight, imageWidth int
-	aliveCells, cellFlipped []util.Cell
-	mutex                   = &sync.Mutex{}
+	nextNeighbourAddr          = ""
+	previousNeighbourAddr      = ""
+	nextClient, previousClient *rpc.Client
+	topEdge, bottomEdge        []byte
+	world                      [][]byte
+	imageHeight, imageWidth    int
+	aliveCells, cellFlipped    []util.Cell
+	//mutex                   *sync.Mutex
 )
 
 func mod(x, m int) int {
@@ -34,31 +35,36 @@ func makeWorld(height, width int) [][]byte {
 	return world
 }
 func sendEdge() {
+	//fmt.Println("Sending Edge")
 	response := new(stubs.Response)
-
 	sendEdgePrevious := new(stubs.Edge)
 	edgePrevious := make([]byte, imageWidth)
 	edgePrevious = world[0]
 	sendEdgePrevious.Edge = edgePrevious
 	sendEdgePrevious.Type = "Top of Original"
-	clientCall(previousNeighbourAddr, sendEdgePrevious, response)
-
+	err1 := previousClient.Call(stubs.GetEdgeValue, sendEdgePrevious, response)
+	if err1 != nil {
+		fmt.Println("Error")
+		fmt.Println(err1)
+	}
 	sendEdgeNext := new(stubs.Edge)
 	edgeNext := make([]byte, imageWidth)
 	edgeNext = world[imageHeight-1]
 	sendEdgeNext.Edge = edgeNext
 	sendEdgeNext.Type = "Bottom of Original"
-	clientCall(nextNeighbourAddr, sendEdgeNext, response)
+	err2 := nextClient.Call(stubs.GetEdgeValue, sendEdgeNext, response)
+	if err2 != nil {
+		fmt.Println("Error")
+		fmt.Println(err2)
+	}
+	//fmt.Println("finished sending edge")
+
 	return
 }
 
-func clientCall(neighbourAddr string, edge *stubs.Edge, response *stubs.Response) {
-	client, _ := rpc.Dial("tcp", neighbourAddr)
-	client.Call(stubs.GetEdgeValue, edge, response)
-	defer client.Close()
-	return
-}
 func calculateAliveCells(word [][]byte) []util.Cell {
+	//fmt.Println("calculating alive cell")
+
 	aliveCells = []util.Cell{}
 	for y := 0; y < imageHeight; y++ {
 		for x := 0; x < imageWidth; x++ {
@@ -67,9 +73,13 @@ func calculateAliveCells(word [][]byte) []util.Cell {
 			}
 		}
 	}
+	//fmt.Println("fininshed calculating alive cell")
+
 	return aliveCells
 }
 func calculateNeighbours(x, y, imageHeight, imageWidth int) int {
+	//fmt.Println("calculating neighbour")
+
 	neighbours := 0
 	for i := -1; i <= 1; i++ {
 		for j := -1; j <= 1; j++ {
@@ -94,9 +104,13 @@ func calculateNeighbours(x, y, imageHeight, imageWidth int) int {
 			}
 		}
 	}
+	//fmt.Println("finished calculating neighbour")
+
 	return neighbours
 }
 func calculateNextState() [][]byte {
+	//fmt.Println("calculating next state")
+
 	cellFlipped = []util.Cell{}
 	newWorld := makeWorld(imageHeight, imageWidth)
 	for y := 0; y < imageHeight; y++ {
@@ -120,58 +134,87 @@ func calculateNextState() [][]byte {
 			}
 		}
 	}
+	//fmt.Println("finished calculating next state")
+
 	return newWorld
 }
 
 type Client struct{}
 
 func (c *Client) Calculate(req stubs.Request, res *stubs.CalculatedValues) (err error) {
+	//fmt.Println("Calculating")
+
 	world = calculateNextState()
 	res.World = world
 	res.AliveCells = calculateAliveCells(world)
 	res.CellFlipped = cellFlipped
+	//fmt.Println("fininshed calculate")
 
 	return
 }
 func (c *Client) Neighbour(req stubs.NeighbourAddr, res *stubs.Response) (err error) {
+	fmt.Println("getting neighbour")
+
 	nextNeighbourAddr = req.NextAddr
 	previousNeighbourAddr = req.PreviousAddr
+	nextClient, _ = rpc.Dial("tcp", nextNeighbourAddr)
+	previousClient, _ = rpc.Dial("tcp", previousNeighbourAddr)
+	fmt.Println("finished getting neighbour")
+
 	return
 }
 func (c *Client) GetClientWorld(req stubs.ClientValues, res *stubs.Response) (err error) {
+	fmt.Println("get client world called")
 	world = req.World
 	imageHeight = req.ImageHeight
 	imageWidth = req.ImageWidth
+	fmt.Println("get client world fininshed")
 
 	return
 }
 func (c *Client) SendEdgeValue(req stubs.Request, res *stubs.Response) (err error) {
+	fmt.Println("Sneding edge")
 	if nextNeighbourAddr != "" && previousNeighbourAddr != "" {
 		sendEdge()
 	}
+	fmt.Println("fininshed sending")
+
 	return
 }
 
 func (c *Client) GetEdgeValue(req stubs.Edge, res *stubs.Response) (err error) {
+	fmt.Println("Get edge value")
+
 	if req.Type == "Bottom of Original" {
 		topEdge = req.Edge
 	} else if req.Type == "Top of Original" {
 		bottomEdge = req.Edge
 	}
+	fmt.Println("fininshed Get edge value")
+
 	return
 }
+
 func main() {
-	pAddr := flag.String("ip", "192.168.148.174:8030", "IP and port to listen on")
-	distributorAddr := flag.String("distributor", "192.168.148.174:8050", "Address of distributor instance")
+	pAddr := flag.String("ip", "127.0.0.1:8030", "IP and port to listen on")
+	distributorAddr := flag.String("distributor", "127.0.0.1:8050", "Address of distributor instance")
 	flag.Parse()
-	listener, _ := net.Listen("tcp", *pAddr)
+	//mutex = &sync.Mutex{}
+
+	rpc.Register(&Client{})
+	//port := strings.Split(*pAddr, ":")
+	listener, err := net.Listen("tcp", *pAddr)
+	if err != nil {
+		fmt.Println("err")
+		fmt.Println(err)
+	}
 	defer listener.Close()
 	client, _ := rpc.Dial("tcp", *distributorAddr)
+
 	defer client.Close()
 	Connect := stubs.Client{ClientAddr: *pAddr}
 	response := new(stubs.Response)
 	client.Call(stubs.ConnectToDistributor, Connect, response)
-	rpc.Register(&Client{})
 	rpc.Accept(listener)
 
 }

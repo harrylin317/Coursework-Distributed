@@ -25,7 +25,7 @@ const dead = 0
 
 func controller(p Params, keyPresses <-chan rune, c controllerChannels) {
 
-	client, err := rpc.Dial("tcp", "192.168.148.174:8050")
+	client, err := rpc.Dial("tcp", "127.0.0.1:8050")
 	if err != nil {
 		fmt.Println("Error")
 		fmt.Println(err)
