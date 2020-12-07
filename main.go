@@ -37,6 +37,11 @@ func main() {
 		"turns",
 		10000000000,
 		"Specify the number of turns to process. Defaults to 10000000000.")
+	flag.StringVar(
+		&params.Addr,
+		"ip",
+		"127.0.0.1:8050",
+		"Specify the ip address for controller to dial")
 
 	flag.Parse()
 
