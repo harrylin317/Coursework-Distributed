@@ -42,12 +42,13 @@ var (
 	connectionChan                            = make(chan bool)
 	initialized                               = false
 	spaceAvaliable, workAvaliable             semaphore.Semaphore
-	itemBuffer                                buffer
 	mutex                                     *sync.Mutex
 	executing                                 bool
 	connectedClients                          = 0
 	clientList                                []clientPack
 	clientMutex                               = &sync.Mutex{}
+	//itemBuffer                                buffer
+
 )
 
 func main() {
@@ -62,18 +63,19 @@ func main() {
 	rpc.Register(&DistributorOperation{})
 	rpc.Accept(listener)
 }
-func newBuffer(size int) buffer {
-	return buffer{
-		b: make([]item, size),
-	}
-}
-func (buffer buffer) get() item {
-	x := buffer.b[0]
-	return x
-}
-func (buffer buffer) put(x item) {
-	buffer.b[0] = x
-}
+
+// func newBuffer(size int) buffer {
+// 	return buffer{
+// 		b: make([]item, size),
+// 	}
+// }
+// func (buffer buffer) get() item {
+// 	x := buffer.b[0]
+// 	return x
+// }
+// func (buffer buffer) put(x item) {
+// 	buffer.b[0] = x
+// }
 
 type DistributorOperation struct{}
 
@@ -101,17 +103,18 @@ func (d *DistributorOperation) ExecuteAllTurns(req stubs.Request, res *stubs.Res
 			turn--
 			break
 		default:
+			fmt.Println("Calculating")
 			executing = true
 			if connectedToController {
 				spaceAvaliable.Wait()
-				mutex.Lock()
+				//mutex.Lock()
 			}
 			initializeClientEdge()
 			startClientCalculation()
 			if connectedToController {
-				newItem := item{turn: turn + 1, aliveCells: aliveCells, cellFlipped: cellFlipped}
-				itemBuffer.put(newItem)
-				mutex.Unlock()
+				//newItem := item{turn: turn + 1, aliveCells: aliveCells, cellFlipped: cellFlipped}
+				//itemBuffer.put(newItem)
+				//mutex.Unlock()
 				workAvaliable.Post()
 			}
 			executing = false
@@ -123,8 +126,8 @@ func (d *DistributorOperation) ExecuteAllTurns(req stubs.Request, res *stubs.Res
 		}
 
 	}
+	fmt.Println("Finished calculating all turns, setting initialized to false")
 	initialized = false
-	fmt.Println("Setting initialized to false")
 	return
 }
 
@@ -141,11 +144,11 @@ func (d *DistributorOperation) GetFilename(req stubs.Request, res *stubs.Filenam
 }
 func (d *DistributorOperation) ConnectToDistributor(req stubs.Client, res *stubs.Response) (err error) {
 	clientMutex.Lock()
-	fmt.Println("Connected")
 	connectedClients++
 	clientDial, _ := rpc.Dial("tcp", req.ClientAddr)
 	newClient := clientPack{address: req.ClientAddr, client: clientDial}
 	clientList = append(clientList, newClient)
+	fmt.Println("Connected clients: ")
 	fmt.Println(clientList)
 	clientMutex.Unlock()
 
@@ -154,18 +157,17 @@ func (d *DistributorOperation) ConnectToDistributor(req stubs.Client, res *stubs
 
 func (d *DistributorOperation) GetCurrentState(req stubs.Request, res *stubs.State) (err error) {
 	workAvaliable.Wait()
-	mutex.Lock()
-	getItem := itemBuffer.get()
-	res.Turn = getItem.turn
-	res.AliveCells = getItem.aliveCells
-	res.CellFlipped = getItem.cellFlipped
-	mutex.Unlock()
+	//mutex.Lock()
+	//getItem := itemBuffer.get()
+	res.Turn = turn
+	res.AliveCells = aliveCells
+	res.CellFlipped = cellFlipped
+	//mutex.Unlock()
 	spaceAvaliable.Post()
 	return
 }
 func (d *DistributorOperation) CheckIfInitialized(req stubs.Request, res *stubs.Initialized) (err error) {
-	fmt.Println("check inintilize")
-	fmt.Println(initialized)
+	fmt.Println("check if inintilized")
 
 	res.Initialized = initialized
 	//the executing value prevents this function from changing connectedToController while ExecuteAllTurns is calculating,
@@ -173,10 +175,10 @@ func (d *DistributorOperation) CheckIfInitialized(req stubs.Request, res *stubs.
 	if !connectedToController {
 		fmt.Println("not connected to controller")
 		for {
-			fmt.Println("waiting for execution to finish")
 			if !executing {
+				fmt.Println("connected to controller")
+
 				connectedToController = true
-				fmt.Println("breaking")
 				break
 			}
 		}
@@ -202,9 +204,7 @@ func (d *DistributorOperation) KeyPressed(req stubs.Key, res *stubs.Response) (e
 	return
 }
 func (d *DistributorOperation) InitializeValues(req stubs.RequiredValue, res *stubs.State) (err error) {
-	fmt.Println("initialized")
 	fmt.Println("Setting initialized to true")
-
 	initialized = true
 	world = req.World
 	imageHeight = req.ImageHeight
@@ -215,8 +215,8 @@ func (d *DistributorOperation) InitializeValues(req stubs.RequiredValue, res *st
 	res.AliveCells = aliveCells
 	spaceAvaliable = semaphore.Init(1, 1)
 	workAvaliable = semaphore.Init(1, 0)
-	itemBuffer = newBuffer(1)
-	mutex = &sync.Mutex{}
+	//itemBuffer = newBuffer(1)
+	//mutex = &sync.Mutex{}
 
 	return
 }
@@ -244,7 +244,6 @@ func calculateAliveCells(imageHeight, imageWidth int, world [][]byte) []util.Cel
 }
 
 func setClientNeighbours() {
-	fmt.Println("Connected Client: ", connectedClients)
 	if connectedClients == 1 {
 		return
 	}
@@ -317,9 +316,7 @@ func startClientCalculation() {
 		doneChannels[i] = make(chan stubs.CalculatedValues)
 		go workerCalculate(clientList[i].client, doneChannels[i])
 	}
-	// for i := 0; i < connectedClients; i++ {
-	// 	go workerCalculate(clientList[i].client, doneChannels[i])
-	// }
+
 	newWorld := makeWorld(0, 0)
 	tmp := 0
 	for i := 0; i < connectedClients; i++ {
