@@ -24,7 +24,10 @@ const alive = 255
 const dead = 0
 
 func controller(p Params, keyPresses <-chan rune, c controllerChannels) {
+	if p.Addr == "" {
+		p.Addr = "127.0.0.1:8050"
 
+	}
 	client, err := rpc.Dial("tcp", p.Addr)
 	if err != nil {
 		fmt.Println("Error")
@@ -38,7 +41,7 @@ func controller(p Params, keyPresses <-chan rune, c controllerChannels) {
 	pause := false
 	exit := false
 	Request := new(stubs.Request)
-	var aliveCells []util.Cell
+	var aliveCells, cellFlipped []util.Cell
 	var filename string
 
 	checkInitialization := new(stubs.Initialized)
@@ -58,36 +61,23 @@ func controller(p Params, keyPresses <-chan rune, c controllerChannels) {
 			}
 		}
 		SendValue := stubs.RequiredValue{ImageHeight: p.ImageHeight, ImageWidth: p.ImageWidth, Turns: p.Turns, World: world}
-		CurrentState := new(stubs.State)
-		client.Call(stubs.InitializeValues, SendValue, CurrentState)
-		aliveCells = CurrentState.AliveCells
+		newState := new(stubs.State)
+		client.Call(stubs.InitializeValues, SendValue, newState)
+		aliveCells = newState.AliveCells
 
 	} else {
 		fmt.Println("Second Entry")
 		GetFilename := new(stubs.Filename)
 		client.Call(stubs.GetFilename, Request, GetFilename)
 		filename = GetFilename.Filename
-		// GetWorld := new(stubs.World)
-		// client.Call(stubs.GetWorld, Request, GetWorld)
-		// GetCurrentState := new(stubs.State)
-		// client.Call(stubs.GetCurrentState, Request, GetCurrentState)
-		// turn = GetCurrentState.Turn
-		// aliveCells = GetCurrentState.AliveCells
-		// //cellFlipped := GetCurrentState.CellFlipped
-		// fmt.Println(turn)
-
-		// for _, cell := range cellFlipped {
-		// 	eventCellFlipped := CellFlipped{CompletedTurns: turn, Cell: cell}
-		// 	c.events <- eventCellFlipped
-		// }
-		// for y := 0; y < p.ImageHeight; y++ {
-		// 	for x := 0; x < p.ImageWidth; x++ {
-		// 		if GetWorld.World[y][x] == alive {
-		// 			eventCellFlipped := CellFlipped{CompletedTurns: turn, Cell: util.Cell{X: x, Y: y}}
-		// 			c.events <- eventCellFlipped
-		// 		}
-		// 	}
-		// }
+		GetCurrentState := new(stubs.State)
+		client.Call(stubs.GetCurrentState, Request, GetCurrentState)
+		turn = GetCurrentState.Turn
+		aliveCells = GetCurrentState.AliveCells
+		for _, cell := range aliveCells {
+			eventCellFlipped := CellFlipped{CompletedTurns: turn, Cell: cell}
+			c.events <- eventCellFlipped
+		}
 
 	}
 	go func() {
@@ -147,7 +137,7 @@ func controller(p Params, keyPresses <-chan rune, c controllerChannels) {
 			client.Call(stubs.GetCurrentState, Request, CurrentState)
 			turn = CurrentState.Turn
 			aliveCells = CurrentState.AliveCells
-			cellFlipped := CurrentState.CellFlipped
+			cellFlipped = CurrentState.CellFlipped
 			for _, cell := range cellFlipped {
 				eventCellFlipped := CellFlipped{CompletedTurns: turn, Cell: cell}
 				c.events <- eventCellFlipped

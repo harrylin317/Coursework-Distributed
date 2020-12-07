@@ -64,19 +64,6 @@ func main() {
 	rpc.Accept(listener)
 }
 
-// func newBuffer(size int) buffer {
-// 	return buffer{
-// 		b: make([]item, size),
-// 	}
-// }
-// func (buffer buffer) get() item {
-// 	x := buffer.b[0]
-// 	return x
-// }
-// func (buffer buffer) put(x item) {
-// 	buffer.b[0] = x
-// }
-
 type DistributorOperation struct{}
 
 func (d *DistributorOperation) ExecuteAllTurns(req stubs.Request, res *stubs.Response) (err error) {
@@ -107,14 +94,10 @@ func (d *DistributorOperation) ExecuteAllTurns(req stubs.Request, res *stubs.Res
 			executing = true
 			if connectedToController {
 				spaceAvaliable.Wait()
-				//mutex.Lock()
 			}
 			initializeClientEdge()
 			startClientCalculation()
 			if connectedToController {
-				//newItem := item{turn: turn + 1, aliveCells: aliveCells, cellFlipped: cellFlipped}
-				//itemBuffer.put(newItem)
-				//mutex.Unlock()
 				workAvaliable.Post()
 			}
 			executing = false
@@ -157,12 +140,9 @@ func (d *DistributorOperation) ConnectToDistributor(req stubs.Client, res *stubs
 
 func (d *DistributorOperation) GetCurrentState(req stubs.Request, res *stubs.State) (err error) {
 	workAvaliable.Wait()
-	//mutex.Lock()
-	//getItem := itemBuffer.get()
 	res.Turn = turn
 	res.AliveCells = aliveCells
 	res.CellFlipped = cellFlipped
-	//mutex.Unlock()
 	spaceAvaliable.Post()
 	return
 }
@@ -177,7 +157,6 @@ func (d *DistributorOperation) CheckIfInitialized(req stubs.Request, res *stubs.
 		for {
 			if !executing {
 				fmt.Println("connected to controller")
-
 				connectedToController = true
 				break
 			}
@@ -211,12 +190,9 @@ func (d *DistributorOperation) InitializeValues(req stubs.RequiredValue, res *st
 	imageWidth = req.ImageWidth
 	totalTurns = req.Turns
 	aliveCells = calculateAliveCells(imageHeight, imageWidth, world)
-	//res.Turn = turn
 	res.AliveCells = aliveCells
 	spaceAvaliable = semaphore.Init(1, 1)
 	workAvaliable = semaphore.Init(1, 0)
-	//itemBuffer = newBuffer(1)
-	//mutex = &sync.Mutex{}
 
 	return
 }
@@ -232,15 +208,15 @@ func makeWorld(height, width int) [][]byte {
 
 //calculate all alive cells and store into a slice
 func calculateAliveCells(imageHeight, imageWidth int, world [][]byte) []util.Cell {
-	aliveCells := []util.Cell{}
+	newAliveCells := []util.Cell{}
 	for y := 0; y < imageHeight; y++ {
 		for x := 0; x < imageHeight; x++ {
 			if world[y][x] == alive {
-				aliveCells = append(aliveCells, util.Cell{X: x, Y: y})
+				newAliveCells = append(aliveCells, util.Cell{X: x, Y: y})
 			}
 		}
 	}
-	return aliveCells
+	return newAliveCells
 }
 
 func setClientNeighbours() {
@@ -316,7 +292,6 @@ func startClientCalculation() {
 		doneChannels[i] = make(chan stubs.CalculatedValues)
 		go workerCalculate(clientList[i].client, doneChannels[i])
 	}
-
 	newWorld := makeWorld(0, 0)
 	tmp := 0
 	for i := 0; i < connectedClients; i++ {
