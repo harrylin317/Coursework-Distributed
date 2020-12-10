@@ -25,7 +25,7 @@ const dead = 0
 
 func controller(p Params, keyPresses <-chan rune, c controllerChannels) {
 	if p.Addr == "" {
-		p.Addr = "18.207.132.86:8050"
+		p.Addr = "127.0.0.1:8050"
 
 	}
 	client, err := rpc.Dial("tcp", p.Addr)
