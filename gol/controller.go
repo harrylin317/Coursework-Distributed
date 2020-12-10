@@ -41,12 +41,13 @@ func controller(p Params, keyPresses <-chan rune, c controllerChannels) {
 	pause := false
 	exit := false
 	Request := new(stubs.Request)
-	var aliveCells, cellFlipped []util.Cell
+	var aliveCells []util.Cell
 	var filename string
 
+	//checks if distributor is initialized
 	checkInitialization := new(stubs.Initialized)
-
 	client.Call(stubs.CheckIfInitialized, Request, checkInitialization)
+	//if not, initialize
 	if !checkInitialization.Initialized {
 		filename = strconv.Itoa(p.ImageWidth) + "x" + strconv.Itoa(p.ImageHeight)
 		c.ioCommand <- ioInput
@@ -60,12 +61,13 @@ func controller(p Params, keyPresses <-chan rune, c controllerChannels) {
 				}
 			}
 		}
-		SendValue := stubs.RequiredValue{ImageHeight: p.ImageHeight, ImageWidth: p.ImageWidth, Turns: p.Turns, World: world}
+		SendValue := stubs.RequiredValue{ImageHeight: p.ImageHeight, ImageWidth: p.ImageWidth, Turns: p.Turns, World: world, LimitConnection: p.LimitConnection}
 		newState := new(stubs.State)
 		client.Call(stubs.InitializeValues, SendValue, newState)
 		aliveCells = newState.AliveCells
 
 	} else {
+		//if yes then get current turn and cellflipped so the SDL visualization can operate
 		fmt.Println("Second Entry")
 		GetFilename := new(stubs.Filename)
 		client.Call(stubs.GetFilename, Request, GetFilename)
@@ -80,6 +82,7 @@ func controller(p Params, keyPresses <-chan rune, c controllerChannels) {
 		}
 
 	}
+	//ticker function
 	go func() {
 		for {
 			select {
@@ -95,7 +98,7 @@ func controller(p Params, keyPresses <-chan rune, c controllerChannels) {
 			}
 		}
 	}()
-
+	//keypressed are sent to distributor
 	go func() {
 		for {
 			key := <-keyPresses
@@ -122,13 +125,13 @@ func controller(p Params, keyPresses <-chan rune, c controllerChannels) {
 		}
 
 	}()
-
+	//if not initialized, tell distributor to start execution
 	if !checkInitialization.Initialized {
 		Response := new(stubs.Response)
 		client.Go(stubs.ExecuteAllTurns, Request, Response, nil)
 	}
+	//loop monitors the calculation in distributor and gets value back every turn
 	for {
-
 		if turn == p.Turns || exit {
 			break
 		} else if !pause {
@@ -137,7 +140,7 @@ func controller(p Params, keyPresses <-chan rune, c controllerChannels) {
 			client.Call(stubs.GetCurrentState, Request, CurrentState)
 			turn = CurrentState.Turn
 			aliveCells = CurrentState.AliveCells
-			cellFlipped = CurrentState.CellFlipped
+			cellFlipped := CurrentState.CellFlipped
 			for _, cell := range cellFlipped {
 				eventCellFlipped := CellFlipped{CompletedTurns: turn, Cell: cell}
 				c.events <- eventCellFlipped
@@ -147,7 +150,6 @@ func controller(p Params, keyPresses <-chan rune, c controllerChannels) {
 		}
 
 	}
-
 	eventFinalTurnComplete := FinalTurnComplete{CompletedTurns: turn, Alive: aliveCells}
 	c.events <- eventFinalTurnComplete
 	generateOutputFile(c, filename, turn, p, client)

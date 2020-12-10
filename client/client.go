@@ -23,7 +23,6 @@ var (
 	imageHeight, imageWidth    int
 	aliveCells, cellFlipped    []util.Cell
 	exitChan                   = make(chan bool)
-	//mutex                   *sync.Mutex
 )
 
 func mod(x, m int) int {
@@ -36,6 +35,8 @@ func makeWorld(height, width int) [][]byte {
 	}
 	return world
 }
+
+//calls to the neighbourings client and sent its top and bottom edges
 func sendEdge() {
 	response := new(stubs.Response)
 	sendEdgePrevious := new(stubs.Edge)
@@ -58,12 +59,10 @@ func sendEdge() {
 		fmt.Println("Error")
 		fmt.Println(err2)
 	}
-
 	return
 }
 
 func calculateAliveCells(word [][]byte) []util.Cell {
-
 	aliveCells = []util.Cell{}
 	for y := 0; y < imageHeight; y++ {
 		for x := 0; x < imageWidth; x++ {
@@ -75,8 +74,9 @@ func calculateAliveCells(word [][]byte) []util.Cell {
 
 	return aliveCells
 }
-func calculateNeighbours(x, y, imageHeight, imageWidth int) int {
 
+//when calculuating, if coordinate is out of bound, then refer to the edges sent by the neighbour client
+func calculateNeighbours(x, y, imageHeight, imageWidth int) int {
 	neighbours := 0
 	for i := -1; i <= 1; i++ {
 		for j := -1; j <= 1; j++ {
@@ -104,8 +104,8 @@ func calculateNeighbours(x, y, imageHeight, imageWidth int) int {
 
 	return neighbours
 }
-func calculateNextState() [][]byte {
 
+func calculateNextState() [][]byte {
 	cellFlipped = []util.Cell{}
 	newWorld := makeWorld(imageHeight, imageWidth)
 	for y := 0; y < imageHeight; y++ {
@@ -135,6 +135,7 @@ func calculateNextState() [][]byte {
 
 type Client struct{}
 
+//calculates new state and sends the result
 func (c *Client) Calculate(req stubs.Request, res *stubs.CalculatedValues) (err error) {
 
 	world = calculateNextState()
@@ -144,8 +145,9 @@ func (c *Client) Calculate(req stubs.Request, res *stubs.CalculatedValues) (err 
 
 	return
 }
-func (c *Client) Neighbour(req stubs.NeighbourAddr, res *stubs.Response) (err error) {
 
+//gets the neighbouring client IP address
+func (c *Client) Neighbour(req stubs.NeighbourAddr, res *stubs.Response) (err error) {
 	nextNeighbourAddr = req.NextAddr
 	previousNeighbourAddr = req.PreviousAddr
 	nextClient, _ = rpc.Dial("tcp", nextNeighbourAddr)
@@ -153,6 +155,8 @@ func (c *Client) Neighbour(req stubs.NeighbourAddr, res *stubs.Response) (err er
 
 	return
 }
+
+//gets the world
 func (c *Client) GetClientWorld(req stubs.ClientValues, res *stubs.Response) (err error) {
 	world = req.World
 	imageHeight = req.ImageHeight
@@ -160,6 +164,8 @@ func (c *Client) GetClientWorld(req stubs.ClientValues, res *stubs.Response) (er
 
 	return
 }
+
+//sends edges to neighbour
 func (c *Client) SendEdgeValue(req stubs.Request, res *stubs.Response) (err error) {
 	if nextNeighbourAddr != "" && previousNeighbourAddr != "" {
 		sendEdge()
@@ -168,8 +174,9 @@ func (c *Client) SendEdgeValue(req stubs.Request, res *stubs.Response) (err erro
 	return
 }
 
+//gets the edge value
 func (c *Client) GetEdgeValue(req stubs.Edge, res *stubs.Response) (err error) {
-
+	//fmt.Println("calling get edge")
 	if req.Type == "Bottom of Original" {
 		topEdge = req.Edge
 	} else if req.Type == "Top of Original" {
@@ -178,6 +185,8 @@ func (c *Client) GetEdgeValue(req stubs.Edge, res *stubs.Response) (err error) {
 
 	return
 }
+
+//terminates program, used channel here because we want the method to return first before terminating
 func (c *Client) Shutdown(req stubs.Request, res *stubs.Response) (err error) {
 	exitChan <- true
 	return

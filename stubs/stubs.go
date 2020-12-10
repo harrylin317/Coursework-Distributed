@@ -25,8 +25,8 @@ type World struct {
 }
 
 type RequiredValue struct {
-	ImageHeight, ImageWidth, Turns int
-	World                          [][]byte
+	ImageHeight, ImageWidth, Turns, LimitConnection int
+	World                                           [][]byte
 }
 type Initialized struct {
 	Initialized bool
@@ -57,9 +57,6 @@ type ClientValues struct {
 	World                   [][]byte
 }
 
-type IsAlive struct {
-	Alive bool
-}
 type NeighbourAddr struct {
 	PreviousAddr string
 	NextAddr     string

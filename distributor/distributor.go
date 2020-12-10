@@ -47,8 +47,6 @@ var (
 	connectedClients                          = 0
 	clientList                                []clientPack
 	clientMutex                               = &sync.Mutex{}
-	//itemBuffer                                buffer
-
 )
 
 func main() {
@@ -66,10 +64,12 @@ func main() {
 
 type DistributorOperation struct{}
 
+//Runs calculation on all turns
 func (d *DistributorOperation) ExecuteAllTurns(req stubs.Request, res *stubs.Response) (err error) {
 	setClientNeighbours()
 	sendWorldToClients()
 	for turn = 0; turn < totalTurns; turn++ {
+		//select statement used to block loop when key is pressed
 		select {
 		case <-pauseChan:
 			select {
@@ -90,8 +90,8 @@ func (d *DistributorOperation) ExecuteAllTurns(req stubs.Request, res *stubs.Res
 			turn--
 			break
 		default:
-			fmt.Println("Calculating")
 			executing = true
+			//if statement is used to block calculation when controller is connected so it can be able to properly get values
 			if connectedToController {
 				spaceAvaliable.Wait()
 			}
@@ -114,6 +114,7 @@ func (d *DistributorOperation) ExecuteAllTurns(req stubs.Request, res *stubs.Res
 	return
 }
 
+//get world
 func (d *DistributorOperation) GetWorld(req stubs.Request, res *stubs.World) (err error) {
 	res.World = world
 	if terminate {
@@ -121,10 +122,14 @@ func (d *DistributorOperation) GetWorld(req stubs.Request, res *stubs.World) (er
 	}
 	return
 }
+
+//get filename
 func (d *DistributorOperation) GetFilename(req stubs.Request, res *stubs.Filename) (err error) {
 	res.Filename = filename
 	return
 }
+
+//used by the clients(workers), distributor creates a list of connectd clients to be used for rpc calls
 func (d *DistributorOperation) ConnectToDistributor(req stubs.Client, res *stubs.Response) (err error) {
 	clientMutex.Lock()
 	connectedClients++
@@ -138,6 +143,7 @@ func (d *DistributorOperation) ConnectToDistributor(req stubs.Client, res *stubs
 	return
 }
 
+//gets the current game state, semaphore used to block ExecuteAllTurns() in order to get values
 func (d *DistributorOperation) GetCurrentState(req stubs.Request, res *stubs.State) (err error) {
 	workAvaliable.Wait()
 	res.Turn = turn
@@ -146,6 +152,8 @@ func (d *DistributorOperation) GetCurrentState(req stubs.Request, res *stubs.Sta
 	spaceAvaliable.Post()
 	return
 }
+
+//checks if the world is initialized, this is used when a controller is trying to reconnect
 func (d *DistributorOperation) CheckIfInitialized(req stubs.Request, res *stubs.Initialized) (err error) {
 	fmt.Println("check if inintilized")
 
@@ -164,6 +172,8 @@ func (d *DistributorOperation) CheckIfInitialized(req stubs.Request, res *stubs.
 	}
 	return
 }
+
+//handles keypressing by sending down channels
 func (d *DistributorOperation) KeyPressed(req stubs.Key, res *stubs.Response) (err error) {
 	key := req.Key
 	switch key {
@@ -182,8 +192,10 @@ func (d *DistributorOperation) KeyPressed(req stubs.Key, res *stubs.Response) (e
 	}
 	return
 }
+
+//initialize values inside distributor
 func (d *DistributorOperation) InitializeValues(req stubs.RequiredValue, res *stubs.State) (err error) {
-	fmt.Println("Setting initialized to true")
+	fmt.Println("initializing values")
 	initialized = true
 	world = req.World
 	imageHeight = req.ImageHeight
@@ -193,6 +205,10 @@ func (d *DistributorOperation) InitializeValues(req stubs.RequiredValue, res *st
 	res.AliveCells = aliveCells
 	spaceAvaliable = semaphore.Init(1, 1)
 	workAvaliable = semaphore.Init(1, 0)
+	//used for benchmarking, limit the amount of clients used
+	if req.LimitConnection != 0 {
+		connectedClients = req.LimitConnection
+	}
 
 	return
 }
@@ -212,18 +228,22 @@ func calculateAliveCells(imageHeight, imageWidth int, world [][]byte) []util.Cel
 	for y := 0; y < imageHeight; y++ {
 		for x := 0; x < imageHeight; x++ {
 			if world[y][x] == alive {
-				newAliveCells = append(aliveCells, util.Cell{X: x, Y: y})
+				newAliveCells = append(newAliveCells, util.Cell{X: x, Y: y})
 			}
 		}
 	}
 	return newAliveCells
 }
 
+//send neighbouring client ip address to all clients
 func setClientNeighbours() {
+	fmt.Println("Connected length", len(clientList))
+	fmt.Println("Connected client", connectedClients)
+
 	if connectedClients == 1 {
 		return
 	}
-	for i, currentClient := range clientList {
+	for i := 0; i < connectedClients; i++ {
 		nextIndex := i + 1
 		previousIndex := i - 1
 		if nextIndex == connectedClients {
@@ -235,7 +255,7 @@ func setClientNeighbours() {
 		previousClientAddr := clientList[previousIndex].address
 		request := stubs.NeighbourAddr{PreviousAddr: previousClientAddr, NextAddr: nextClientAddr}
 		response := new(stubs.Response)
-		err := currentClient.client.Call(stubs.Neighbour, request, response)
+		err := clientList[i].client.Call(stubs.Neighbour, request, response)
 		if err != nil {
 			fmt.Println("Error in setting neighbour")
 			fmt.Println(err)
@@ -245,6 +265,7 @@ func setClientNeighbours() {
 	return
 }
 
+//seperate the world evenly and sent to clients
 func sendWorldToClients() {
 	dividedLength := imageHeight / connectedClients
 	checkRemainder := imageHeight % connectedClients
@@ -252,7 +273,7 @@ func sendWorldToClients() {
 	clientImageWidth := imageWidth
 
 	tmp := 0
-	for i, currentClient := range clientList {
+	for i := 0; i < connectedClients; i++ {
 		if checkRemainder != 0 && i == connectedClients-1 {
 			fmt.Println("Remainder")
 			clientImageHeight = imageHeight - (dividedLength * i)
@@ -265,13 +286,15 @@ func sendWorldToClients() {
 		}
 		clientValues := stubs.ClientValues{ImageHeight: clientImageHeight, ImageWidth: clientImageWidth, World: clientWorld}
 		response := new(stubs.Response)
-		currentClient.client.Call(stubs.GetClientWorld, clientValues, response)
+		clientList[i].client.Call(stubs.GetClientWorld, clientValues, response)
 		tmp = tmp + dividedLength
-
 	}
+
 	return
 
 }
+
+//worker function that calls client to calculate world
 func workerCalculate(client *rpc.Client, doneChannel chan stubs.CalculatedValues) {
 	clientCalculatedValues := new(stubs.CalculatedValues)
 	request := new(stubs.Request)
@@ -284,6 +307,8 @@ func workerCalculate(client *rpc.Client, doneChannel chan stubs.CalculatedValues
 	doneChannel <- *clientCalculatedValues
 
 }
+
+//creates channels for workers and collects the finished world by appending them together.
 func startClientCalculation() {
 	cellFlipped = []util.Cell{}
 	aliveCells = []util.Cell{}
@@ -310,11 +335,13 @@ func startClientCalculation() {
 	world = newWorld
 	return
 }
+
+//sends edge (top/bottom row) of the client's world to its relative neighbours
 func initializeClientEdge() {
-	for _, currentClient := range clientList {
+	for i := 0; i < connectedClients; i++ {
 		request := new(stubs.Request)
 		response := new(stubs.Response)
-		err := currentClient.client.Call(stubs.SendEdgeValue, request, response)
+		err := clientList[i].client.Call(stubs.SendEdgeValue, request, response)
 		if err != nil {
 			fmt.Println("Error in initialize edge")
 			fmt.Println(err)
@@ -323,6 +350,8 @@ func initializeClientEdge() {
 	return
 }
 
+//waits for controller to call final GetWorld() before terminating
+//notifies clients to terminate, waits 3 seconds and terminates distributor
 func shutDown() {
 	<-terminateChan
 	for _, currentClient := range clientList {

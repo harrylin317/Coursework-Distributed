@@ -42,6 +42,11 @@ func main() {
 		"ip",
 		"127.0.0.1:8050",
 		"Specify the ip address for controller to dial")
+	flag.IntVar(
+		&params.LimitConnection,
+		"limit",
+		0,
+		"Limit the amount of client to be executed, used for benchmarking")
 
 	flag.Parse()
 
