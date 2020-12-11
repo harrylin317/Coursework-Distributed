@@ -84,6 +84,7 @@ func (d *DistributorOperation) ExecuteAllTurns(req stubs.Request, res *stubs.Res
 				break
 			}
 		case connectedToController = <-connectionChan:
+			fmt.Println("set connetion to false")
 			turn--
 			break
 		case terminate = <-terminateChan:
@@ -104,6 +105,7 @@ func (d *DistributorOperation) ExecuteAllTurns(req stubs.Request, res *stubs.Res
 
 		}
 		if terminate {
+			fmt.Println("Terminating")
 			shutDown()
 			break
 		}
@@ -237,9 +239,6 @@ func calculateAliveCells(imageHeight, imageWidth int, world [][]byte) []util.Cel
 
 //send neighbouring client ip address to all clients
 func setClientNeighbours() {
-	fmt.Println("Connected length", len(clientList))
-	fmt.Println("Connected client", connectedClients)
-
 	if connectedClients == 1 {
 		return
 	}

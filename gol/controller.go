@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/rpc"
 	"strconv"
+	"sync"
 	"time"
 
 	"uk.ac.bris.cs/gameoflife/stubs"
@@ -36,14 +37,19 @@ func controller(p Params, keyPresses <-chan rune, c controllerChannels) {
 	defer client.Close()
 	ticker := time.NewTicker(2 * time.Second)
 	done := make(chan bool)
+	tickerGet := make(chan bool)
+	pauseChan := make(chan bool)
+	exitChan := make(chan bool)
+	tickerMutex := &sync.Mutex{}
 	world := makeWorld(p.ImageHeight, p.ImageWidth)
-	turn := 0
+	turns := 0
+
 	pause := false
 	exit := false
-	Request := new(stubs.Request)
 	var aliveCells []util.Cell
 	var filename string
 
+	Request := new(stubs.Request)
 	//checks if distributor is initialized
 	checkInitialization := new(stubs.Initialized)
 	client.Call(stubs.CheckIfInitialized, Request, checkInitialization)
@@ -74,10 +80,10 @@ func controller(p Params, keyPresses <-chan rune, c controllerChannels) {
 		filename = GetFilename.Filename
 		GetCurrentState := new(stubs.State)
 		client.Call(stubs.GetCurrentState, Request, GetCurrentState)
-		turn = GetCurrentState.Turn
+		turns = GetCurrentState.Turn
 		aliveCells = GetCurrentState.AliveCells
 		for _, cell := range aliveCells {
-			eventCellFlipped := CellFlipped{CompletedTurns: turn, Cell: cell}
+			eventCellFlipped := CellFlipped{CompletedTurns: turns, Cell: cell}
 			c.events <- eventCellFlipped
 		}
 
@@ -92,8 +98,11 @@ func controller(p Params, keyPresses <-chan rune, c controllerChannels) {
 				if pause {
 					break
 				}
+				tickerMutex.Lock()
+				tickerGet <- true
 				aliveCellsCount := len(aliveCells)
-				eventAliveCellsCount := AliveCellsCount{CompletedTurns: turn, CellsCount: aliveCellsCount}
+				eventAliveCellsCount := AliveCellsCount{CompletedTurns: turns, CellsCount: aliveCellsCount}
+				tickerMutex.Unlock()
 				c.events <- eventAliveCellsCount
 			}
 		}
@@ -107,19 +116,22 @@ func controller(p Params, keyPresses <-chan rune, c controllerChannels) {
 			client.Call(stubs.KeyPressed, keyPressed, Response)
 			switch Response.Message {
 			case "Output":
-				generateOutputFile(c, filename, turn, p, client)
+				generateOutputFile(c, filename, turns, p, client)
 			case "Exit":
-				exit = true
+				fmt.Println("Exiting")
+				exitChan <- true
 			case "Pause":
 				if pause {
 					pause = false
-					fmt.Println("Continuing execution on turn: ", turn)
-					c.events <- StateChange{turn - 1, Executing}
+					fmt.Println("Continuing execution on turn: ", turns)
+					pauseChan <- pause
+					c.events <- StateChange{turns - 1, Executing}
 
 				} else {
 					pause = true
-					fmt.Println("Currently paused on turn: ", turn+1)
-					c.events <- StateChange{turn, Paused}
+					fmt.Println("Currently paused on turn: ", turns+1)
+					pauseChan <- pause
+					c.events <- StateChange{turns, Paused}
 				}
 			}
 		}
@@ -132,42 +144,65 @@ func controller(p Params, keyPresses <-chan rune, c controllerChannels) {
 	}
 	//loop monitors the calculation in distributor and gets value back every turn
 	for {
-		if turn == p.Turns || exit {
+		if turns == p.Turns {
 			break
-		} else if !pause {
+		}
+		select {
+		case <-tickerGet:
+			tickerMutex.Lock()
+			tickerMutex.Unlock()
+			turns--
+		case <-pauseChan:
+			select {
+			case <-pauseChan:
+				break
+			case exit = <-exitChan:
+				break
+			}
+		case exit = <-exitChan:
+		default:
 			Request := new(stubs.Request)
 			CurrentState := new(stubs.State)
 			client.Call(stubs.GetCurrentState, Request, CurrentState)
-			turn = CurrentState.Turn
+			turns = CurrentState.Turn
 			aliveCells = CurrentState.AliveCells
 			cellFlipped := CurrentState.CellFlipped
 			for _, cell := range cellFlipped {
-				eventCellFlipped := CellFlipped{CompletedTurns: turn, Cell: cell}
+				eventCellFlipped := CellFlipped{CompletedTurns: turns, Cell: cell}
 				c.events <- eventCellFlipped
 			}
-			eventTurnComplete := TurnComplete{CompletedTurns: turn}
+			eventTurnComplete := TurnComplete{CompletedTurns: turns}
 			c.events <- eventTurnComplete
-		}
 
+		}
+		if exit {
+			break
+		}
 	}
-	eventFinalTurnComplete := FinalTurnComplete{CompletedTurns: turn, Alive: aliveCells}
-	c.events <- eventFinalTurnComplete
-	generateOutputFile(c, filename, turn, p, client)
+	select {
+	case <-tickerGet:
+		fmt.Println("Get extra ticker")
+	default:
+	}
 
 	ticker.Stop()
 	done <- true
 
+	eventFinalTurnComplete := FinalTurnComplete{CompletedTurns: turns, Alive: aliveCells}
+	c.events <- eventFinalTurnComplete
+	generateOutputFile(c, filename, turns, p, client)
+
 	c.ioCommand <- ioCheckIdle
 	<-c.ioIdle
 
-	c.events <- StateChange{turn, Quitting}
+	c.events <- StateChange{turns, Quitting}
 	close(c.events)
 
 }
 
-func generateOutputFile(c controllerChannels, filename string, turn int, p Params, client *rpc.Client) {
+func generateOutputFile(c controllerChannels, filename string, turns int, p Params, client *rpc.Client) {
 	c.ioCommand <- ioOutput
-	filename = filename + "x" + strconv.Itoa(turn)
+	filename = filename + "x" + strconv.Itoa(turns)
 	c.ioFilename <- filename
 	Request := new(stubs.Request)
 	GetWorld := new(stubs.World)
@@ -178,7 +213,7 @@ func generateOutputFile(c controllerChannels, filename string, turn int, p Param
 			c.Output <- GetWorld.World[y][x]
 		}
 	}
-	eventImageOutputComplete := ImageOutputComplete{CompletedTurns: turn, Filename: filename}
+	eventImageOutputComplete := ImageOutputComplete{CompletedTurns: turns, Filename: filename}
 	c.events <- eventImageOutputComplete
 }
 
